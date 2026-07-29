@@ -22,19 +22,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: 22
 
       - name: Pakketten installeren
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Bouwen
         run: npm run build
-        env:
-          # Optioneel: zet deze als repository secrets als je de sleutels
-          # niet in src/config.js wilt hebben staan.
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON: ${{ secrets.VITE_SUPABASE_ANON }}
 
       - name: Terugval voor onbekende paden
         run: cp dist/index.html dist/404.html
