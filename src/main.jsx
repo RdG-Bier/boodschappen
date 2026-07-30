@@ -12,16 +12,25 @@ if (!configOk) {
       <h1 style="font-size:20px;margin:0 0 12px">Supabase nog niet ingesteld</h1>
       <p style="line-height:1.6;color:#4c6357;font-size:15px">
         Open <code>src/config.js</code> en vul je Project URL en anon key in.
-        Ze staan in Supabase onder Project Settings &rarr; API.
-        Daarna opnieuw bouwen en pushen.
       </p>
-      <p style="font-family:ui-monospace,monospace;font-size:12px;color:#8d9490">
-        nu ingesteld: ${SUPABASE_URL}
-      </p>
+      <p style="font-family:ui-monospace,monospace;font-size:12px;color:#8d9490">nu ingesteld: ${SUPABASE_URL}</p>
     </div>`;
 } else {
   createRoot(root).render(<App />);
+
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+    /* nieuwe versie? dan eenmalig herladen zodat je nooit op oude code blijft hangen */
+    let bezig = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (bezig) return;
+      bezig = true;
+      window.location.reload();
+    });
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js").then((reg) => {
+        reg.update().catch(() => {});
+        setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+      }).catch(() => {});
+    });
   }
 }

@@ -254,7 +254,15 @@ const CSS = `
 .bd-flag.s{background:var(--blue);color:#fff}
 .bd-flag.w{background:#efe6c8;color:#6b5218}
 .bd-flag.d{background:#f6dcd4;color:#8f3a24}
-.bd-ord{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid #f0f2ec}
+.bd-ord{display:flex;align-items:center;gap:8px;height:48px;border-top:1px solid #f0f2ec;
+  background:#fff;transition:background .12s ease}
+.bd-ord.pak{background:#f4fbe0;box-shadow:0 3px 10px rgba(18,39,31,.12);border-radius:8px;position:relative;z-index:2}
+.bd-ord .grip{flex:none;width:34px;height:38px;display:grid;place-items:center;color:var(--ink2);
+  cursor:grab;touch-action:none}
+.bd-ord.pak .grip{cursor:grabbing;color:var(--limeDeep)}
+.bd-pull{display:flex;align-items:flex-end;justify-content:center;overflow:hidden}
+.bd-pull span{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink2);padding-bottom:6px}
 .bd-ord .n{font-family:var(--mono);font-size:10.5px;color:var(--ink2);width:20px;flex:none}
 .bd-ord .l{flex:1;min-width:0;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bd-ord button{flex:none;width:34px;height:34px;border:1px solid var(--line);border-radius:8px;
@@ -448,6 +456,29 @@ const Pen = () => (
   </svg>
 );
 
+/* Eigen component met eigen tekststand: hertekent de app, dan blijft
+   dit veld staan en houdt het toetsenbord de focus. */
+const NoteVeld = React.memo(function NoteVeld({ start, onKlaar }) {
+  const [v, setV] = useState(start || "");
+  const t = useRef(null);
+  useEffect(() => () => clearTimeout(t.current), []);
+  const wijzig = (val) => {
+    setV(val);
+    clearTimeout(t.current);
+    t.current = setTimeout(() => onKlaar(val), 600);
+  };
+  return (
+    <input
+      value={v}
+      inputMode="text"
+      autoComplete="off"
+      placeholder="notitie, bijv. 800 gram of grote fles"
+      onChange={(e) => wijzig(e.target.value)}
+      onBlur={() => { clearTimeout(t.current); onKlaar(v); }}
+    />
+  );
+});
+
 export default function App() {
   /* wie ben ik / welk huishouden */
   const [me, setMe] = useState(null);
@@ -469,6 +500,12 @@ export default function App() {
   const [aliasDraft, setAliasDraft] = useState("");
   const [ownDraft, setOwnDraft] = useState("");
   const [dupWarn, setDupWarn] = useState(false);
+  const [dragIdx, setDragIdx] = useState(null);
+  const dragRef = useRef(null);
+  const ordRef = useRef(CATS);
+  const [pull, setPull] = useState(0);
+  const pullRef = useRef(null);
+  const bodyRef = useRef(null);
   const [booting, setBooting] = useState(true);
 
   /* data van het huidige huishouden */
@@ -508,12 +545,31 @@ export default function App() {
   const myIni = me && me.name ? ini(me.name) : "";
   const isOwner = members.owner === uid;
   const meerdere = members.people.length > 1;
+  /* labels voor de leden: R, of Rd en Ri als twee namen met dezelfde letter beginnen */
+  const labels = useMemo(() => {
+    const tel = {};
+    members.people.forEach((p) => {
+      const l = (p.name || "?").trim().charAt(0).toUpperCase();
+      tel[l] = (tel[l] || 0) + 1;
+    });
+    const m = {};
+    members.people.forEach((p) => {
+      const n = (p.name || "?").trim();
+      const l = n.charAt(0).toUpperCase();
+      m[p.uid] = tel[l] > 1 && n.length > 1 ? l + n.charAt(1).toLowerCase() : l;
+    });
+    return m;
+  }, [members]);
+  const wie = (id) => labels[id] || id || "";
+
   const isBeheerder =
     !!admin && (admin.uid === uid || (!!admin.name && !!me && norm(admin.name) === norm(me.name || "")));
   /* eigen volgorde, met nieuwe categorieën automatisch achteraan */
   const ordCats = useMemo(() => {
     const bekend = catOrder.filter((c) => CATS.includes(c));
-    return [...bekend, ...CATS.filter((c) => !bekend.includes(c))];
+    const alles = [...bekend, ...CATS.filter((c) => !bekend.includes(c))];
+    ordRef.current = alles;
+    return alles;
   }, [catOrder]);
   const tel = useRef(0);
 
@@ -780,12 +836,43 @@ export default function App() {
     await saveSettings({ shops: sh, ...(ds !== undefined ? { defaultShop: ds } : {}) });
   }
 
+  /* slepen met de greep links */
+  function dragStart(e, i) {
+    dragRef.current = { i, y: e.clientY };
+    setDragIdx(i);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  }
+  function dragMove(e) {
+    const d = dragRef.current;
+    if (!d) return;
+    const rij = 48;
+    const stap = Math.round((e.clientY - d.y) / rij);
+    if (!stap) return;
+    const arr = [...ordRef.current];
+    const j = Math.max(0, Math.min(arr.length - 1, d.i + stap));
+    if (j === d.i) return;
+    const [item] = arr.splice(d.i, 1);
+    arr.splice(j, 0, item);
+    ordRef.current = arr;
+    setCatOrder(arr);
+    d.i = j;
+    d.y = e.clientY;
+    setDragIdx(j);
+  }
+  function dragEnd() {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setDragIdx(null);
+    saveSettings({ catOrder: ordRef.current });
+  }
+
   async function moveCat(cat, richting) {
     const arr = [...ordCats];
     const i = arr.indexOf(cat);
     const j = i + richting;
     if (i < 0 || j < 0 || j >= arr.length) return;
     [arr[i], arr[j]] = [arr[j], arr[i]];
+    ordRef.current = arr;
     setCatOrder(arr);
     await saveSettings({ catOrder: arr });
   }
@@ -802,6 +889,33 @@ export default function App() {
     await saveSettings({ alias: a });
     await HUIS.add(hh, house, a);
     say(a ? `Jullie kunnen nu ook met “${a}” meedoen` : "Eenvoudige code verwijderd");
+  }
+
+  /* naar beneden trekken bovenaan de lijst = opnieuw ophalen */
+  function pullStart(e) {
+    const el = bodyRef.current;
+    if (!el || el.scrollTop > 2 || dragRef.current) return;
+    pullRef.current = { y: e.touches[0].clientY };
+  }
+  function pullMove(e) {
+    const p = pullRef.current;
+    const el = bodyRef.current;
+    if (!p || !el) return;
+    if (el.scrollTop > 2) { pullRef.current = null; setPull(0); return; }
+    const dy = e.touches[0].clientY - p.y;
+    if (dy > 0) setPull(Math.min(dy * 0.6, 80));
+  }
+  async function pullEnd() {
+    const p = pullRef.current;
+    pullRef.current = null;
+    if (!p) return;
+    const ver = pull;
+    setPull(0);
+    if (ver > 52 && hh && me && me.name) {
+      say("Bijwerken…");
+      await openHouse(hh, uid, me.name);
+      say("Lijst is bijgewerkt");
+    }
   }
 
   async function claimBeheer() {
@@ -983,7 +1097,7 @@ export default function App() {
           items.push({
             rid: i.id + "@" + slug(winkel),
             id: i.id, name: i.name, cat: i.cat, ...s, shop: winkel,
-            by: myIni, done: false, doneAt: 0,
+            by: uid, done: false, doneAt: 0,
           });
         })
     );
@@ -1017,7 +1131,7 @@ export default function App() {
     setList((l) => ({
       ...l,
       items: l.items.map((i) =>
-        rijId(i) === rid ? { ...i, done: !i.done, doneAt: i.done ? 0 : Date.now(), got: i.done ? "" : myIni } : i
+        rijId(i) === rid ? { ...i, done: !i.done, doneAt: i.done ? 0 : Date.now(), got: i.done ? "" : uid } : i
       ),
     }));
 
@@ -1137,8 +1251,7 @@ export default function App() {
         </div>
         {opened && (
           <div className="bd-editor">
-            <input value={s.note} placeholder="notitie, bijv. 800 gram of grote fles"
-              onChange={(e) => patch(it.id, "note", e.target.value)} />
+            <NoteVeld key={"n" + it.id} start={s.note} onKlaar={(v) => patch(it.id, "note", v)} />
             <div className="bd-shoprow">
               <span className="lbl">Winkel</span>
               <select value={s.shop || defShop} onChange={(e) => patch(it.id, "shop", e.target.value)}>
@@ -1363,7 +1476,11 @@ export default function App() {
         )}
       </header>
 
-      <div className="bd-body">
+      <div className="bd-body" ref={bodyRef}
+        onTouchStart={pullStart} onTouchMove={pullMove} onTouchEnd={pullEnd} onTouchCancel={pullEnd}>
+        <div className="bd-pull" style={{ height: pull }}>
+          {pull > 8 && <span>{pull > 52 ? "laat los om te verversen" : "trek verder…"}</span>}
+        </div>
         {tab === "kies" && (hits ? (
           <>
             <p className="bd-eyebrow">{hits.length} van {catalog.length} artikelen</p>
@@ -1381,12 +1498,15 @@ export default function App() {
         ) : (
           <>
             {favs.length > 0 && (
-              <>
-                <p className="bd-eyebrow">Vaak op je lijst</p>
-                <div className="bd-items">{favs.map((it) => rij(it, "f" + it.id))}</div>
-              </>
+              <section className="bd-cat">
+                <button className="bd-cathead" onClick={() => setOpen((p) => ({ ...p, __top: !p.__top }))}>
+                  <svg className={"bd-chev" + (open.__top ? " open" : "")} width="9" height="14" viewBox="0 0 9 14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M2 2l5 5-5 5" /></svg>
+                  <h2>Meest bestelde artikelen</h2>
+                  <span className="bd-count">{favs.length}</span>
+                </button>
+                {open.__top && <div className="bd-items">{favs.map((it) => rij(it, "f" + it.id))}</div>}
+              </section>
             )}
-            <p className="bd-eyebrow">Catalogus · looproute</p>
             {ordCats.map((cat) => {
               const items = byCat[cat] || [];
               if (!items.length) return null;
@@ -1445,7 +1565,7 @@ export default function App() {
                                 {dubbel.has(norm(i.name)) && (
                                   <span className="bd-flag d">! ook bij {dubbel.get(norm(i.name)).filter((w) => w !== i.shop).join(" en ")}</span>
                                 )}
-                                {meerdere && i.by && <span className="bd-by">van {i.by}</span>}
+                                {meerdere && i.by && <span className="bd-by">van {wie(i.by)}</span>}
                               </span>
                             )}
                           </span>
@@ -1471,7 +1591,7 @@ export default function App() {
                     <span className="bd-box"><Check /></span>
                     <span className="bd-txt">
                       <span className="nm">{i.name}</span>
-                      {meerdere && i.got && <span className="bd-meta"><span className="bd-by">gepakt door {i.got}</span></span>}
+                      {meerdere && i.got && <span className="bd-meta"><span className="bd-by">gepakt door {wie(i.got)}</span></span>}
                     </span>
                     {(i.qty || 1) > 1 && <span className="bd-qty">{i.qty}×</span>}
                   </button>
@@ -1599,7 +1719,7 @@ export default function App() {
                   <p className="sub">{members.people.length} {members.people.length === 1 ? "persoon" : "personen"} in {house}</p>
                   {members.people.map((p) => (
                     <div className="bd-house" key={p.uid}>
-                      <span className="bd-ini">{p.ini}</span>
+                      <span className="bd-ini">{wie(p.uid)}</span>
                       <span className="nm">
                         {p.name}{p.uid === uid ? " · jij" : ""}
                         <span style={{ display: "block", fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink2)", fontWeight: 400, marginTop: 2 }}>
@@ -1652,9 +1772,21 @@ export default function App() {
 
                 <div className="bd-pane">
                   <h3>Volgorde in de winkel</h3>
-                  <p className="sub">zet de rijen in de looprichting van jullie supermarkt</p>
+                  <p className="sub">pak een rij bij de strepen en sleep hem op zijn plek</p>
                   {ordCats.map((c, i) => (
-                    <div className="bd-ord" key={c}>
+                    <div className={"bd-ord" + (dragIdx === i ? " pak" : "")} key={c}>
+                      <span
+                        className="grip"
+                        onPointerDown={(e) => dragStart(e, i)}
+                        onPointerMove={dragMove}
+                        onPointerUp={dragEnd}
+                        onPointerCancel={dragEnd}
+                        aria-label="versleep"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                          <path d="M4 8h16M4 12h16M4 16h16" />
+                        </svg>
+                      </span>
                       <span className="n">{i + 1}</span>
                       <span className="l">{c}</span>
                       <button onClick={() => moveCat(c, -1)} disabled={i === 0} aria-label="omhoog">↑</button>
@@ -1666,7 +1798,7 @@ export default function App() {
                       Standaardvolgorde
                     </button>
                   </div>
-                  <p className="bd-hint">Deze volgorde geldt voor alle winkels in dit huishouden.</p>
+                  <p className="bd-hint">Deze volgorde is van dit huishouden en geldt voor al jullie winkels. Andere huishoudens hebben hun eigen route.</p>
                 </div>
 
                 <div className="bd-pane">
