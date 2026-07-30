@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    Boodschappen — catalogus → winkellijst → historie
    ============================================================ */
 
+const VERSIE = "2026.07.30-a";   /* staat onderaan Beheer › Huishouden */
 const IDX_KEY = "bd:index:v1";        /* gedeeld: welke huishoudens bestaan er */
 const CAT_KEY = "bd:cat:v3";          /* gedeeld: één catalogus voor iedereen */
 const ADMIN_KEY = "bd:admin:v1";      /* gedeeld: wie beheert de catalogus */
@@ -314,8 +315,10 @@ const CSS = `
 .bd-bar i{display:block;height:100%;background:var(--limeDeep);border-radius:3px;transition:width .3s ease}
 .bd-sec{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
   color:var(--ink2);padding:15px 16px 6px}
-.bd-line{display:flex;align-items:center;gap:12px;width:100%;padding:13px 16px;text-align:left;
-  border-top:1px solid #f0f2ec}
+.bd-line{display:flex;align-items:stretch;width:100%;border-top:1px solid #f0f2ec}
+.bd-hitline{flex:1;min-width:0;display:flex;align-items:center;gap:12px;padding:13px 4px 13px 16px;text-align:left}
+.bd-weg{flex:none;width:42px;display:grid;place-items:center;color:#c6cfc2;border-radius:0 8px 8px 0}
+.bd-weg.armed{background:#b5432f;color:#fff}
 .bd-line .bd-txt .nm{font-size:15.5px;font-weight:600}
 .bd-line.done{opacity:.42}
 .bd-line.done .nm{text-decoration:line-through;font-weight:400}
@@ -918,6 +921,21 @@ export default function App() {
     }
   }
 
+  /* haalt de nieuwste versie op, ook als de browser een oude vasthoudt */
+  async function verversApp() {
+    try {
+      if ("caches" in window) {
+        const ks = await caches.keys();
+        await Promise.all(ks.map((k) => caches.delete(k)));
+      }
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+    } catch {}
+    window.location.reload();
+  }
+
   async function claimBeheer() {
     const a = { uid, name: me.name };
     setAdmin(a);
@@ -1127,6 +1145,17 @@ export default function App() {
   }
 
   const rijId = (i) => i.rid || i.id + "@" + slug(i.shop || defShop);
+
+  /* haalt alleen deze regel van de winkellijst; de catalogus blijft ongemoeid */
+  function haalWeg(rid, naam) {
+    setConfirm("");
+    setList((l) => {
+      if (!l) return l;
+      const over = l.items.filter((i) => rijId(i) !== rid);
+      return over.length ? { ...l, items: over } : null;
+    });
+    say(`${naam} van de lijst gehaald`);
+  }
   const tickLine = (rid) =>
     setList((l) => ({
       ...l,
@@ -1554,7 +1583,8 @@ export default function App() {
                     <div key={cat}>
                       <p className="bd-sec">{cat}</p>
                       {regels.map((i) => (
-                        <button className="bd-line" key={rijId(i)} onClick={() => tickLine(rijId(i))}>
+                        <div className="bd-line" key={rijId(i)}>
+                        <button className="bd-hitline" onClick={() => tickLine(rijId(i))}>
                           <span className="bd-box" />
                           <span className="bd-txt">
                             <span className="nm">{i.name}</span>
@@ -1571,6 +1601,13 @@ export default function App() {
                           </span>
                           {(i.qty || 1) > 1 && <span className="bd-qty">{i.qty}×</span>}
                         </button>
+                        <button className={"bd-weg" + (confirm === "r" + rijId(i) ? " armed" : "")}
+                          aria-label="van de lijst halen"
+                          onClick={() => {
+                            if (confirm === "r" + rijId(i)) haalWeg(rijId(i), i.name);
+                            else { setConfirm("r" + rijId(i)); setTimeout(() => setConfirm(""), 4000); }
+                          }}><Trash /></button>
+                        </div>
                       ))}
                     </div>
                   );
@@ -1587,14 +1624,22 @@ export default function App() {
               <div className="bd-cart">
                 <p className="bd-sec">In de wagen</p>
                 {cart.map((i) => (
-                  <button className="bd-line done" key={rijId(i)} onClick={() => tickLine(rijId(i))}>
-                    <span className="bd-box"><Check /></span>
-                    <span className="bd-txt">
-                      <span className="nm">{i.name}</span>
-                      {meerdere && i.got && <span className="bd-meta"><span className="bd-by">gepakt door {wie(i.got)}</span></span>}
-                    </span>
-                    {(i.qty || 1) > 1 && <span className="bd-qty">{i.qty}×</span>}
-                  </button>
+                  <div className="bd-line done" key={rijId(i)}>
+                    <button className="bd-hitline" onClick={() => tickLine(rijId(i))}>
+                      <span className="bd-box"><Check /></span>
+                      <span className="bd-txt">
+                        <span className="nm">{i.name}</span>
+                        {meerdere && i.got && <span className="bd-meta"><span className="bd-by">gepakt door {wie(i.got)}</span></span>}
+                      </span>
+                      {(i.qty || 1) > 1 && <span className="bd-qty">{i.qty}×</span>}
+                    </button>
+                    <button className={"bd-weg" + (confirm === "r" + rijId(i) ? " armed" : "")}
+                      aria-label="van de lijst halen"
+                      onClick={() => {
+                        if (confirm === "r" + rijId(i)) haalWeg(rijId(i), i.name);
+                        else { setConfirm("r" + rijId(i)); setTimeout(() => setConfirm(""), 4000); }
+                      }}><Trash /></button>
+                  </div>
                 ))}
               </div>
             )}
@@ -1712,6 +1757,19 @@ export default function App() {
                     onBlur={() => saveMe({ ...me, appUrl: urlDraft.trim() })} placeholder="https://…" />
                   <p className="bd-hint">Plak hier de link waarop jullie de app openen. Die komt dan automatisch in de uitnodiging te staan.</p>
                   {csv && <textarea className="bd-csv" readOnly value={csv} onFocus={(e) => e.target.select()} />}
+                  <label>Versie van de app</label>
+                  <div className="bd-mini">
+                    <span style={{ flex: 1, fontFamily: "var(--mono)", fontSize: 12, alignSelf: "center", color: "var(--ink2)" }}>
+                      {VERSIE}
+                    </span>
+                    <button className="pri" style={{ flex: "none", padding: "10px 16px" }} onClick={verversApp}>
+                      Nieuwste ophalen
+                    </button>
+                  </div>
+                  <p className="bd-hint">
+                    Zie je een wijziging niet terug, tik dan op Nieuwste ophalen. Dat gooit de
+                    opgeslagen versie weg en haalt de app opnieuw op.
+                  </p>
                 </div>
 
                 <div className="bd-pane">
