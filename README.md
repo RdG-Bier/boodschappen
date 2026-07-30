@@ -8,8 +8,19 @@ voor de gedeelde data. Geen serverkosten, geen deploy-limiet zoals bij Netlify.
 
 | soort data | waar | wie ziet het |
 |---|---|---|
-| catalogus, winkellijst, historie, leden | Supabase | iedereen met dezelfde huishoudcode |
+| catalogus met artikelen | Supabase, **centraal** | alle huishoudens samen |
+| winkellijst, historie, leden, instellingen | Supabase, per huishouden | iedereen met dezelfde huishoudcode |
 | je naam en je huishoudcodes | `localStorage` van je browser | alleen dat toestel |
+
+De catalogus is opzettelijk gedeeld: één lijst met artikelen voor iedereen, met één
+beheerder. Wie geen beheerder is kan artikelen voorstellen — die zijn voor de indiener
+direct te gebruiken en komen bij de beheerder in de wachtrij. Verwijderen en wijzigen
+kan alleen de beheerder. De eerste die in Beheer op "Ik beheer de catalogus" tikt, is
+het; daarna is die rol niet meer over te nemen.
+
+Wat per huishouden verschilt: de looproute (volgorde van de categorieën), de winkels,
+de standaardwinkel, de gebruiksteller achter "Vaak op je lijst", en natuurlijk de lijst
+en historie zelf.
 
 `src/App.jsx` bevat de hele app. `src/storage.js` regelt de opslag. Wil je later naar
 een andere backend, dan is dat het enige bestand dat verandert.
@@ -91,6 +102,13 @@ lijst als op je telefoon.
 
 ## Goed om te weten
 
+* Kom je terug met dezelfde naam nadat je browsergegevens zijn gewist, dan pakt de app
+  je oude plek in het huishouden weer op — inclusief het beheer, als je dat had. Zo
+  ontstaan er geen dubbele personen. Werkt dat niet, dan kun je in Beheer het beheer
+  overnemen door de volledige huishoudcode in te vullen.
+* Naast de lange code kun je in Beheer een **eenvoudige code** instellen, bijvoorbeeld
+  `pergo`. Handig als iemand zijn browsergegevens kwijtraakt, maar houd hem niet te
+  voorspelbaar.
 * De huishoudcode **scheidt** huishoudens; hij beveiligt ze niet. Wie de volledige code
   kent, kan meelezen en meeschrijven. Voor een boodschappenlijst is dat prima; voor een
   product dat je verkoopt wil je echte accounts (Supabase Auth) en policies per
@@ -106,7 +124,9 @@ lijst als op je telefoon.
 ## Bestanden
 
 ```
-supabase.sql                  eenmalig in Supabase uitvoeren
+supabase.sql                  eenmalig in Supabase uitvoeren (nieuwe installatie)
+supabase-update.sql           bijwerken van een bestaande installatie
+supabase-opruimen.sql         huishoudens bekijken en dubbele weggooien
 src/config.js                 jouw Project URL en anon key
 src/storage.js                opslaglaag (Supabase + localStorage)
 src/App.jsx                   de app zelf: 2018 artikelen, huishoudens, cijfers

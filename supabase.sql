@@ -57,8 +57,8 @@ $$;
 -- 4. Huishoudens: naam wel zichtbaar, code niet
 -- ------------------------------------------------------------
 
--- Huishouden aanmelden of hernoemen
-create or replace function public.huis_add(p_hh text, p_name text)
+-- Huishouden aanmelden of bijwerken, nu met een zelfgekozen code
+create or replace function public.huis_add(p_hh text, p_name text, p_alias text default '')
 returns void
 language plpgsql
 security definer
@@ -66,6 +66,7 @@ set search_path = public
 as $$
 declare
   v jsonb;
+  a text := lower(trim(coalesce(p_alias, '')));
 begin
   if p_hh is null or length(p_hh) <> 8 then
     raise exception 'ongeldige code';
@@ -78,11 +79,21 @@ begin
     v := '[]'::jsonb;
   end if;
 
-  -- oude vermelding van deze code eruit, nieuwe erbij
+  -- eenvoudige code mag niet al bij een ander huishouden horen
+  if a <> '' and exists (
+    select 1 from jsonb_array_elements(v) x
+    where lower(coalesce(x->>'alias', '')) = a and x->>'hh' <> p_hh
+  ) then
+    raise exception 'die eenvoudige code is al in gebruik';
+  end if;
+
   v := coalesce(
         (select jsonb_agg(x) from jsonb_array_elements(v) x where x->>'hh' <> p_hh),
         '[]'::jsonb)
-       || jsonb_build_object('hh', p_hh, 'name', left(coalesce(p_name, 'Huishouden'), 60));
+       || jsonb_build_object(
+            'hh', p_hh,
+            'name', left(coalesce(p_name, 'Huishouden'), 60),
+            'alias', left(a, 30));
 
   insert into public.kv (key, value, updated_at)
   values ('bd:index:v1', v::text, now())
@@ -124,9 +135,26 @@ $$;
 grant execute on function public.kv_get(text)          to anon, authenticated;
 grant execute on function public.kv_set(text, text)    to anon, authenticated;
 grant execute on function public.kv_del(text)          to anon, authenticated;
-grant execute on function public.huis_add(text, text)  to anon, authenticated;
+grant execute on function public.huis_add(text, text, text) to anon, authenticated;
+grant execute on function public.huis_alias(text)          to anon, authenticated;
 grant execute on function public.huis_index()          to anon, authenticated;
 grant execute on function public.huis_zoek(text, text) to anon, authenticated;
+
+-- Volledige code opzoeken via de eenvoudige code
+create or replace function public.huis_alias(p_alias text)
+returns text
+language sql
+security definer
+set search_path = public
+as $$
+  select x->>'hh'
+  from public.kv, jsonb_array_elements(value::jsonb) as x
+  where key = 'bd:index:v1'
+    and lower(coalesce(x->>'alias', '')) = lower(trim(coalesce(p_alias, '')))
+    and coalesce(x->>'alias', '') <> ''
+  limit 1;
+$$;
+
 
 -- Klaar. Controle: dit hoort een lege lijst te geven, geen foutmelding.
 -- select * from public.huis_index();
