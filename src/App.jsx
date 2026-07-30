@@ -5,6 +5,8 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    ============================================================ */
 
 const IDX_KEY = "bd:index:v1";        /* gedeeld: welke huishoudens bestaan er */
+const CAT_KEY = "bd:cat:v3";          /* gedeeld: één catalogus voor iedereen */
+const ADMIN_KEY = "bd:admin:v1";      /* gedeeld: wie beheert de catalogus */
 const ME_KEY = "bd:me:v1";                    /* persoonlijk: welk huishouden ben ik */
 const K = (hh, n) => `bd:hh:${hh}:${n}`;      /* gedeeld per huishouden */
 const ALFA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";   /* zonder I, O, 0, 1 */
@@ -133,7 +135,7 @@ function buildSeedCatalog() {
       const k = cat + "|" + norm(name);
       if (zien.has(k)) return;
       zien.add(k);
-      out.push({ id: slug(cat) + "__" + slug(name), name, cat, uses: 0 });
+      out.push({ id: slug(cat) + "__" + slug(name), name, cat });
     })
   );
   return out;
@@ -153,10 +155,10 @@ const nlDate = (s) => {
    je krijgt alleen de naam en de eerste vier tekens terug. Bestaat dat
    laagje niet (zoals binnen Claude), dan gebeurt hetzelfde lokaal. */
 const HUIS = {
-  async add(code, naam) {
-    if (typeof window !== "undefined" && window.huis) return window.huis.add(code, naam);
+  async add(code, naam, alias) {
+    if (typeof window !== "undefined" && window.huis) return window.huis.add(code, naam, alias || "");
     const idx = await load(IDX_KEY, []);
-    return save(IDX_KEY, [...idx.filter((x) => x.hh !== code), { hh: code, name: naam }]);
+    return save(IDX_KEY, [...idx.filter((x) => x.hh !== code), { hh: code, name: naam, alias: alias || "" }]);
   },
   async index() {
     if (typeof window !== "undefined" && window.huis) return window.huis.index();
@@ -166,6 +168,13 @@ const HUIS = {
     if (typeof window !== "undefined" && window.huis) return window.huis.zoek(pre, rest);
     const idx = await load(IDX_KEY, []);
     const hit = idx.find((x) => x.hh.toUpperCase() === (pre + rest).toUpperCase());
+    return hit ? hit.hh : null;
+  },
+  /* zoek op zelfgekozen eenvoudige code */
+  async viaAlias(a) {
+    if (typeof window !== "undefined" && window.huis && window.huis.viaAlias) return window.huis.viaAlias(a);
+    const idx = await load(IDX_KEY, []);
+    const hit = idx.find((x) => (x.alias || "").toLowerCase() === a.trim().toLowerCase());
     return hit ? hit.hh : null;
   },
 };
@@ -243,6 +252,19 @@ const CSS = `
 .bd-flag{font-family:var(--mono);font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;white-space:nowrap}
 .bd-flag.a{background:var(--amber);color:#3a2400}
 .bd-flag.s{background:var(--blue);color:#fff}
+.bd-flag.w{background:#efe6c8;color:#6b5218}
+.bd-flag.d{background:#f6dcd4;color:#8f3a24}
+.bd-ord{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid #f0f2ec}
+.bd-ord .n{font-family:var(--mono);font-size:10.5px;color:var(--ink2);width:20px;flex:none}
+.bd-ord .l{flex:1;min-width:0;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bd-ord button{flex:none;width:34px;height:34px;border:1px solid var(--line);border-radius:8px;
+  background:#fff;display:grid;place-items:center;font-size:14px}
+.bd-ord button:disabled{opacity:.3}
+.bd-pend{border-top:1px solid #f0f2ec;padding:11px 0;display:flex;align-items:center;gap:9px}
+.bd-pend .t{flex:1;min-width:0}
+.bd-pend .t b{display:block;font-size:14px;font-weight:650}
+.bd-pend .t span{font-family:var(--mono);font-size:10px;color:var(--ink2)}
+.bd-ok{flex:none;background:var(--limeDeep);color:#fff;border-radius:8px;padding:9px 13px;font-size:13px;font-weight:700}
 
 .bd-step{flex:none;display:flex;align-items:center;border-left:1px solid var(--limeDeep)}
 .bd-step button{width:38px;align-self:stretch;font-size:19px;font-weight:600;color:var(--ink);
@@ -439,6 +461,14 @@ export default function App() {
   const [pickHh, setPickHh] = useState("");
   const [pickRest, setPickRest] = useState("");
   const [newShop, setNewShop] = useState("");
+  const [pending, setPending] = useState([]);
+  const [admin, setAdmin] = useState(null);
+  const [uses, setUses] = useState({});
+  const [catOrder, setCatOrder] = useState(CATS);
+  const [alias, setAlias] = useState("");
+  const [aliasDraft, setAliasDraft] = useState("");
+  const [ownDraft, setOwnDraft] = useState("");
+  const [dupWarn, setDupWarn] = useState(false);
   const [booting, setBooting] = useState(true);
 
   /* data van het huidige huishouden */
@@ -478,6 +508,13 @@ export default function App() {
   const myIni = me && me.name ? ini(me.name) : "";
   const isOwner = members.owner === uid;
   const meerdere = members.people.length > 1;
+  const isBeheerder =
+    !!admin && (admin.uid === uid || (!!admin.name && !!me && norm(admin.name) === norm(me.name || "")));
+  /* eigen volgorde, met nieuwe categorieën automatisch achteraan */
+  const ordCats = useMemo(() => {
+    const bekend = catOrder.filter((c) => CATS.includes(c));
+    return [...bekend, ...CATS.filter((c) => !bekend.includes(c))];
+  }, [catOrder]);
   const tel = useRef(0);
 
   const say = useCallback((m) => {
@@ -496,28 +533,65 @@ export default function App() {
       return false;
     }
     const bestaand = mem.people.find((p) => p.uid === myUid);
-    if (!bestaand || bestaand.name !== naam) {
-      mem.people = [...mem.people.filter((p) => p.uid !== myUid),
-        { uid: myUid, name: naam, ini: ini(naam), joined: bestaand ? bestaand.joined : Date.now(), seen: Date.now() }];
+    let hersteld = "";
+    if (!bestaand) {
+      /* staat er al iemand met deze naam? dan ben jij dat, met een nieuwe
+         browser-identiteit. Plek en eventueel eigenaarschap gaan mee over. */
+      const zelfde = mem.people.find((p) => norm(p.name) === norm(naam));
+      if (zelfde) {
+        const oud = zelfde.uid;
+        mem.people = mem.people.map((p) =>
+          p.uid === oud ? { ...p, uid: myUid, name: naam, ini: ini(naam), seen: Date.now() } : p
+        );
+        if (mem.owner === oud) mem.owner = myUid;
+        mem.blocked = mem.blocked.filter((b) => (b.uid || b) !== oud);
+        hersteld = naam;
+      } else {
+        mem.people = [...mem.people, { uid: myUid, name: naam, ini: ini(naam), joined: Date.now(), seen: Date.now() }];
+      }
       if (!mem.owner) mem.owner = myUid;
+      await save(K(code, "members"), mem);
+    } else if (bestaand.name !== naam) {
+      mem.people = mem.people.map((p) => (p.uid === myUid ? { ...p, name: naam, ini: ini(naam), seen: Date.now() } : p));
       await save(K(code, "members"), mem);
     } else {
       mem.people = mem.people.map((p) => (p.uid === myUid ? { ...p, seen: Date.now() } : p));
       save(K(code, "members"), mem);
     }
-    setMembers(mem);
-    const cat = await load(K(code, "catalog"), null);
-    setShops(cat && Array.isArray(cat.shops) && cat.shops.length ? cat.shops : SHOPS_STANDAARD);
-    setDefShop(cat && cat.defaultShop ? cat.defaultShop : SHOP_DEFAULT);
-    if (cat && cat.items && cat.items.length) {
-      setCatalog(cat.items);
-      setHouse(cat.name || "Huishouden");
-    } else {
-      const seed = buildSeedCatalog();
-      setCatalog(seed);
-      setHouse("Huishouden");
-      save(K(code, "catalog"), { name: "Huishouden", items: seed });
+    /* niemand meer als eigenaar in de lijst? dan mag wie er is het oppakken */
+    if (mem.owner && !mem.people.some((p) => p.uid === mem.owner)) {
+      mem.owner = myUid;
+      await save(K(code, "members"), mem);
     }
+    setMembers(mem);
+    if (hersteld) setTimeout(() => say(`Welkom terug ${hersteld} — je oude plek is hergebruikt`), 400);
+    /* instellingen van dit huishouden */
+    const cfg = await load(K(code, "catalog"), null);
+    setShops(cfg && Array.isArray(cfg.shops) && cfg.shops.length ? cfg.shops : SHOPS_STANDAARD);
+    setDefShop(cfg && cfg.defaultShop ? cfg.defaultShop : SHOP_DEFAULT);
+    setUses(cfg && cfg.uses ? cfg.uses : {});
+    setCatOrder(cfg && Array.isArray(cfg.catOrder) && cfg.catOrder.length ? cfg.catOrder : CATS);
+    setAlias(cfg && cfg.alias ? cfg.alias : "");
+    setAliasDraft(cfg && cfg.alias ? cfg.alias : "");
+    setHouse(cfg && cfg.name ? cfg.name : "Huishouden");
+
+    /* de catalogus is gedeeld door alle huishoudens */
+    let glob = await load(CAT_KEY, null);
+    if (!glob || !Array.isArray(glob.items) || !glob.items.length) {
+      const start = cfg && Array.isArray(cfg.items) && cfg.items.length
+        ? cfg.items.map((i) => ({ id: i.id, name: i.name, cat: i.cat }))
+        : buildSeedCatalog();
+      glob = { items: start, pending: [] };
+      await save(CAT_KEY, glob);
+    }
+    setCatalog(glob.items);
+    setPending(Array.isArray(glob.pending) ? glob.pending : []);
+    const a = await load(ADMIN_KEY, null);
+    if (a && a.uid !== myUid && a.name && norm(a.name) === norm(naam)) {
+      const na = { ...a, uid: myUid };
+      await save(ADMIN_KEY, na);
+      setAdmin(na);
+    } else setAdmin(a);
     const live = await load(K(code, "live"), null);
     setSel(live && live.sel ? live.sel : {});
     setList(live && live.list ? live.list : null);
@@ -557,6 +631,10 @@ export default function App() {
     const wie = myName.trim();
     if (!wie) return say("Vul eerst je eigen naam in");
     const name = setupName.trim() || "Ons huishouden";
+    if (!dupWarn && index.some((x) => norm(x.name) === norm(name))) {
+      setDupWarn(true);
+      return;
+    }
     const code = newCode();
     let items = buildSeedCatalog();
     let live = null;
@@ -571,7 +649,7 @@ export default function App() {
       }
     }
     await save(K(code, "catalog"), { name, items, shops: SHOPS_STANDAARD, defaultShop: SHOP_DEFAULT });
-    await HUIS.add(code, name);
+    await HUIS.add(code, name, "");
     await save(K(code, "members"), {
       owner: me.uid,
       people: [{ uid: me.uid, name: wie, ini: ini(wie), joined: Date.now(), seen: Date.now() }],
@@ -582,6 +660,7 @@ export default function App() {
     await saveMe({ ...me, name: wie, hh: code, houses: [...me.houses.filter((x) => x.hh !== code), { hh: code, name }] });
     await openHouse(code, me.uid, wie);
     setSetupName("");
+    setDupWarn(false);
     setTab("kies");
     say(history.length ? `${name} aangemaakt — je oude lijst is overgenomen` : `${name} aangemaakt`);
   }
@@ -589,8 +668,14 @@ export default function App() {
   async function joinHouse(codeArg) {
     const wie = myName.trim();
     if (!wie) return say("Vul eerst je eigen naam in");
-    const code = cleanCode(typeof codeArg === "string" ? codeArg : joinCode);
-    if (code.length !== 8) return say("Een code bestaat uit 8 tekens");
+    const ruw = typeof codeArg === "string" ? codeArg : joinCode;
+    let code = cleanCode(ruw);
+    if (code.length !== 8) {
+      /* geen lange code? probeer het als zelfgekozen code */
+      const viaA = await HUIS.viaAlias(ruw);
+      if (!viaA) return say("Onbekende code");
+      code = viaA;
+    }
     const cat = await load(K(code, "catalog"), null);
     if (!(cat && cat.items && cat.items.length) && !joinWarn) {
       setJoinWarn(true);
@@ -612,6 +697,16 @@ export default function App() {
     if (!ok) return;
     await saveMe({ ...me, hh: code });
     setTab("kies");
+  }
+
+  /* eigenaarschap naar jezelf halen; daarvoor moet je de volledige code kennen */
+  async function takeOwner() {
+    if (cleanCode(ownDraft) !== hh) return say("Die code hoort niet bij dit huishouden");
+    const mem = { ...members, owner: uid };
+    setMembers(mem);
+    setOwnDraft("");
+    await save(K(hh, "members"), mem);
+    say(`${me.name} beheert dit huishouden nu`);
   }
 
   /* oprichter haalt iemand uit het huishouden */
@@ -658,20 +753,62 @@ export default function App() {
     say("Huishouden van dit toestel gehaald");
   }
 
-  async function saveCatalog(items, name, sh, ds) {
-    setCatalog(items);
-    return save(K(hh, "catalog"), {
-      name: name !== undefined ? name : house,
-      items,
-      shops: sh !== undefined ? sh : shops,
-      defaultShop: ds !== undefined ? ds : defShop,
-    });
+  /* instellingen van dit huishouden bewaren */
+  const cfgRef = useRef({});
+  useEffect(() => {
+    cfgRef.current = { name: house, shops, defaultShop: defShop, uses, catOrder, alias };
+  }, [house, shops, defShop, uses, catOrder, alias]);
+
+  async function saveSettings(patch) {
+    const next = { ...cfgRef.current, ...patch };
+    cfgRef.current = next;
+    return save(K(hh, "catalog"), next);
+  }
+
+  /* gedeelde catalogus bewaren */
+  async function saveGlobal(items, pend) {
+    const nItems = items !== undefined ? items : catalog;
+    const nPend = pend !== undefined ? pend : pending;
+    setCatalog(nItems);
+    setPending(nPend);
+    return save(CAT_KEY, { items: nItems, pending: nPend });
   }
 
   async function saveShops(sh, ds) {
     setShops(sh);
     if (ds !== undefined) setDefShop(ds);
-    await saveCatalog(catalog, undefined, sh, ds);
+    await saveSettings({ shops: sh, ...(ds !== undefined ? { defaultShop: ds } : {}) });
+  }
+
+  async function moveCat(cat, richting) {
+    const arr = [...ordCats];
+    const i = arr.indexOf(cat);
+    const j = i + richting;
+    if (i < 0 || j < 0 || j >= arr.length) return;
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+    setCatOrder(arr);
+    await saveSettings({ catOrder: arr });
+  }
+
+  async function saveAlias(v) {
+    const a = v.trim().toLowerCase().replace(/\s+/g, "");
+    if (a === alias) return;
+    if (a && a.length < 4) return say("Maak hem minstens 4 tekens lang");
+    if (a) {
+      const bezet = await HUIS.viaAlias(a);
+      if (bezet && bezet !== hh) return say("Die code is al door een ander huishouden in gebruik");
+    }
+    setAlias(a);
+    await saveSettings({ alias: a });
+    await HUIS.add(hh, house, a);
+    say(a ? `Jullie kunnen nu ook met “${a}” meedoen` : "Eenvoudige code verwijderd");
+  }
+
+  async function claimBeheer() {
+    const a = { uid, name: me.name };
+    setAdmin(a);
+    await save(ADMIN_KEY, a);
+    say("Je beheert nu de catalogus");
   }
 
   async function renameHouse(name) {
@@ -679,7 +816,6 @@ export default function App() {
     if (!clean) return;
     setHouse(clean);
     HUIS.add(hh, clean);
-    await saveCatalog(catalog, clean);
     await saveMe({ ...me, houses: me.houses.map((x) => (x.hh === hh ? { ...x, name: clean } : x)) });
   }
 
@@ -723,24 +859,33 @@ export default function App() {
   }, [ready, hh, uid, me, saveMe]);
 
   /* ---------- afgeleide lijsten ---------- */
+  /* wat jij ziet: alles wat goedgekeurd is, plus je eigen inzendingen */
+  const zichtbaar = useMemo(() => {
+    const mijn = pending.filter((p) => p.byUid === uid || isBeheerder).map((p) => ({ ...p, wacht: true }));
+    return [...catalog, ...mijn];
+  }, [catalog, pending, uid, isBeheerder]);
+
   const byCat = useMemo(() => {
     const m = {};
-    catalog.forEach((i) => (m[i.cat] = m[i.cat] || []).push(i));
+    zichtbaar.forEach((i) => (m[i.cat] = m[i.cat] || []).push(i));
     Object.values(m).forEach((a) => a.sort((x, y) => x.name.localeCompare(y.name, "nl")));
     return m;
-  }, [catalog]);
+  }, [zichtbaar]);
 
   const hits = useMemo(() => {
     const t = norm(q.trim());
     if (!t) return null;
-    return catalog
+    return zichtbaar
       .filter((i) => norm(i.name).includes(t))
       .sort((a, b) => norm(a.name).indexOf(t) - norm(b.name).indexOf(t) || a.name.localeCompare(b.name, "nl"))
       .slice(0, 60);
-  }, [q, catalog]);
+  }, [q, zichtbaar]);
 
   const exact = hits && hits.some((i) => norm(i.name) === norm(q.trim()));
-  const favs = useMemo(() => catalog.filter((i) => i.uses > 0).sort((a, b) => b.uses - a.uses).slice(0, 10), [catalog]);
+  const favs = useMemo(
+    () => zichtbaar.filter((i) => (uses[i.id] || 0) > 0).sort((a, b) => (uses[b.id] || 0) - (uses[a.id] || 0)).slice(0, 10),
+    [zichtbaar, uses]
+  );
   const selCount = Object.keys(sel).length;
 
   const toggle = useCallback((id) => {
@@ -754,37 +899,47 @@ export default function App() {
   const patch = (id, k, v) => setSel((p) => ({ ...p, [id]: { ...p[id], [k]: v } }));
   const bump = (id, d) => setSel((p) => ({ ...p, [id]: { ...p[id], qty: Math.max(1, Math.min(99, (p[id].qty || 1) + d)) } }));
 
+  /* nieuw artikel: de beheerder zet het er direct in, anderen dienen het in */
+  async function nieuwArtikel(name, cat) {
+    const item = { id: slug(cat) + "__" + slug(name) + "-" + Date.now().toString(36), name, cat };
+    if (isBeheerder) {
+      await saveGlobal([...catalog, item]);
+      say(`“${name}” staat nu in ${cat}`);
+    } else {
+      await saveGlobal(undefined, [...pending, { ...item, byUid: uid, byName: me.name, hh, when: Date.now() }]);
+      say(`“${name}” ingediend — je kunt hem meteen gebruiken`);
+    }
+    return item;
+  }
+
   async function addFromSearch() {
     const name = q.trim();
     if (!name) return;
-    const item = { id: slug(newCat) + "__" + slug(name) + "-" + Date.now().toString(36), name, cat: newCat, uses: 0 };
+    const item = await nieuwArtikel(name, newCat);
     toggle(item.id);
     setEdit(item.id);
     setOpen((p) => ({ ...p, [newCat]: true }));
-    const ok = await saveCatalog([...catalog, item]);
-    say(ok ? `“${name}” staat nu in ${newCat}` : `“${name}” toegevoegd, maar opslaan lukte niet`);
   }
 
   async function addFromManager() {
     const name = addName.trim();
     if (!name) return;
-    if (catalog.some((i) => norm(i.name) === norm(name) && i.cat === aCat)) return say("Die staat er al in");
-    const item = { id: slug(aCat) + "__" + slug(name) + "-" + Date.now().toString(36), name, cat: aCat, uses: 0 };
-    await saveCatalog([...catalog, item]);
+    if (zichtbaar.some((i) => norm(i.name) === norm(name) && i.cat === aCat)) return say("Die staat er al in");
+    await nieuwArtikel(name, aCat);
     setAddName("");
-    say(`“${name}” toegevoegd aan ${aCat}`);
   }
 
   async function applyEdit(id) {
     const name = mName.trim();
-    if (!name) return;
-    await saveCatalog(catalog.map((i) => (i.id === id ? { ...i, name, cat: mCat } : i)));
+    if (!name || !isBeheerder) return;
+    await saveGlobal(catalog.map((i) => (i.id === id ? { ...i, name, cat: mCat } : i)));
     setMEdit(null);
     say("Artikel bijgewerkt");
   }
 
   async function dropItem(id, name) {
-    await saveCatalog(catalog.filter((i) => i.id !== id));
+    if (!isBeheerder) return say("Alleen de beheerder kan artikelen verwijderen");
+    await saveGlobal(catalog.filter((i) => i.id !== id), pending.filter((p) => p.id !== id));
     setSel((p) => {
       const n = { ...p };
       delete n[id];
@@ -795,41 +950,74 @@ export default function App() {
     say(`“${name}” uit de catalogus verwijderd`);
   }
 
+  async function keurGoed(p) {
+    await saveGlobal([...catalog, { id: p.id, name: p.name, cat: p.cat }], pending.filter((x) => x.id !== p.id));
+    say(`“${p.name}” goedgekeurd`);
+  }
+
+  async function wijsAf(p) {
+    await saveGlobal(undefined, pending.filter((x) => x.id !== p.id));
+    setConfirm("");
+    say(`“${p.name}” afgewezen`);
+  }
+
   async function restoreSeed() {
+    if (!isBeheerder) return say("Alleen de beheerder kan de catalogus aanvullen");
     const have = new Set(catalog.map((i) => norm(i.name) + "|" + i.cat));
     const add = buildSeedCatalog().filter((i) => !have.has(norm(i.name) + "|" + i.cat));
     if (!add.length) return say("Alle basisartikelen staan er al in");
-    await saveCatalog([...catalog, ...add]);
+    await saveGlobal([...catalog, ...add]);
     say(`${add.length} basisartikelen teruggezet`);
   }
 
   /* ---------- lijst ---------- */
   function makeList() {
     const items = [];
-    CATS.forEach((cat) =>
-      catalog
+    ordCats.forEach((cat) =>
+      zichtbaar
         .filter((i) => i.cat === cat && sel[i.id])
         .sort((a, b) => a.name.localeCompare(b.name, "nl"))
-        .forEach((i) => items.push({ id: i.id, name: i.name, cat: i.cat, ...sel[i.id], by: myIni, done: false, doneAt: 0 }))
+        .forEach((i) => {
+          const s = sel[i.id];
+          const winkel = s.shop || defShop;
+          items.push({
+            rid: i.id + "@" + slug(winkel),
+            id: i.id, name: i.name, cat: i.cat, ...s, shop: winkel,
+            by: myIni, done: false, doneAt: 0,
+          });
+        })
     );
     if (!items.length) return;
-    saveCatalog(catalog.map((i) => (sel[i.id] ? { ...i, uses: (i.uses || 0) + 1 } : i)));
-    setList((cur) =>
-      cur
-        ? { ...cur, items: [...cur.items, ...items.filter((n) => !cur.items.some((o) => o.id === n.id))] }
-        : { title: stamp(), date: iso(), items }
-    );
+
+    const nu = { ...uses };
+    Object.keys(sel).forEach((id) => (nu[id] = (nu[id] || 0) + 1));
+    setUses(nu);
+    saveSettings({ uses: nu });
+
+    setList((cur) => {
+      if (!cur) return { title: stamp(), date: iso(), items };
+      /* zelfde artikel bij een andere winkel wordt een eigen regel;
+         precies dezelfde combinatie telt bij het aantal op */
+      const samen = [...cur.items];
+      items.forEach((n) => {
+        const i = samen.findIndex((o) => (o.rid || o.id + "@" + slug(o.shop || defShop)) === n.rid);
+        if (i >= 0) samen[i] = { ...samen[i], qty: Math.min(99, (samen[i].qty || 1) + (n.qty || 1)) };
+        else samen.push(n);
+      });
+      return { ...cur, items: samen };
+    });
     setSel({});
     setEdit(null);
     setQ("");
     setTab("winkel");
   }
 
-  const tickLine = (id) =>
+  const rijId = (i) => i.rid || i.id + "@" + slug(i.shop || defShop);
+  const tickLine = (rid) =>
     setList((l) => ({
       ...l,
       items: l.items.map((i) =>
-        i.id === id ? { ...i, done: !i.done, doneAt: i.done ? 0 : Date.now(), got: i.done ? "" : myIni } : i
+        rijId(i) === rid ? { ...i, done: !i.done, doneAt: i.done ? 0 : Date.now(), got: i.done ? "" : myIni } : i
       ),
     }));
 
@@ -918,22 +1106,23 @@ export default function App() {
   }
 
   /* ---------- rij in de catalogus ---------- */
-  const Row = ({ it }) => {
+  const rij = (it, sleutel) => {
     const s = sel[it.id];
     const on = !!s;
     const opened = on && edit === it.id;
     return (
-      <div>
+      <div key={sleutel || it.id}>
         <div className={"bd-item" + (on ? " on" : "") + (opened ? " edit" : "")}>
           <button className="bd-hit" onClick={() => { toggle(it.id); setEdit(on ? null : it.id); }}>
             <span className="bd-tick">{on && <Check />}</span>
             <span className="bd-txt">
               <span className="nm">{it.name}</span>
-              {on && (s.note || s.deal || (s.shop && s.shop !== defShop)) && (
+              {(it.wacht || (on && (s.note || s.deal || (s.shop && s.shop !== defShop)))) && (
                 <span className="bd-meta">
-                  {s.deal && <span className="bd-flag a">Aanbieding</span>}
-                  {s.shop && s.shop !== defShop && <span className="bd-flag s">{s.shop}</span>}
-                  {s.note && <span className="bd-note-inline">{s.note}</span>}
+                  {on && s.deal && <span className="bd-flag a">Aanbieding</span>}
+                  {on && s.shop && s.shop !== defShop && <span className="bd-flag s">{s.shop}</span>}
+                  {on && s.note && <span className="bd-note-inline">{s.note}</span>}
+                  {it.wacht && <span className="bd-flag w">wacht op goedkeuring</span>}
                 </span>
               )}
             </span>
@@ -970,6 +1159,18 @@ export default function App() {
   const cart = list ? list.items.filter((i) => i.done).sort((a, b) => b.doneAt - a.doneAt) : [];
   const pct = list && list.items.length ? Math.round((cart.length / list.items.length) * 100) : 0;
 
+  /* namen die bij meerdere winkels op de lijst staan */
+  const dubbel = useMemo(() => {
+    const m = new Map();
+    (list ? list.items : []).forEach((i) => {
+      const k = norm(i.name);
+      const w = i.shop || defShop;
+      if (!m.has(k)) m.set(k, []);
+      if (!m.get(k).includes(w)) m.get(k).push(w);
+    });
+    return new Map([...m].filter(([, w]) => w.length > 1));
+  }, [list, defShop]);
+
   /* eerst de standaardwinkel, daarna de rest op alfabet */
   const perShop = useMemo(() => {
     const m = {};
@@ -995,16 +1196,16 @@ export default function App() {
   });
 
   const nieuwBeschikbaar = useMemo(() => {
-    if (!catalog.length) return 0;
+    if (!catalog.length || !isBeheerder) return 0;
     const have = new Set(catalog.map((i) => norm(i.name) + "|" + i.cat));
     return buildSeedCatalog().filter((i) => !have.has(norm(i.name) + "|" + i.cat)).length;
-  }, [catalog]);
+  }, [catalog, isBeheerder]);
 
   const mHits = useMemo(() => {
     const t = norm(mq.trim());
-    const base = t ? catalog.filter((i) => norm(i.name).includes(t)) : catalog;
-    return [...base].sort((a, b) => CATS.indexOf(a.cat) - CATS.indexOf(b.cat) || a.name.localeCompare(b.name, "nl")).slice(0, 80);
-  }, [mq, catalog]);
+    const base = t ? zichtbaar.filter((i) => norm(i.name).includes(t)) : zichtbaar;
+    return [...base].sort((a, b) => ordCats.indexOf(a.cat) - ordCats.indexOf(b.cat) || a.name.localeCompare(b.name, "nl")).slice(0, 80);
+  }, [mq, zichtbaar, ordCats]);
 
   /* ---------- setup ---------- */
   if (booting) return <div className="bd-root"><style>{CSS}</style><div className="bd-empty"><span>Even laden…</span></div></div>;
@@ -1078,17 +1279,26 @@ export default function App() {
             <h3>Nieuw huishouden starten</h3>
             <p className="sub">je krijgt een code om te delen</p>
             <label>Naam</label>
-            <input value={setupName} onChange={(e) => setSetupName(e.target.value)} placeholder="bijv. Thuis" />
-            <div className="act"><button className="bd-btn" onClick={startHouse}>Huishouden aanmaken</button></div>
+            <input value={setupName} onChange={(e) => { setSetupName(e.target.value); setDupWarn(false); }} placeholder="bijv. Thuis" />
+            {dupWarn && (
+              <div className="bd-warnbox">
+                Er bestaat al een huishouden dat “{setupName.trim()}” heet. Wilde je daar juist bij?
+                Kies dat dan hieronder bij <b>Bestaande huishoudens</b> — dan houd je één lijst in
+                plaats van twee. Weet je het zeker, tik dan nog een keer op de knop.
+              </div>
+            )}
+            <div className="act">
+              <button className="bd-btn" onClick={startHouse}>{dupWarn ? "Toch een nieuw huishouden" : "Huishouden aanmaken"}</button>
+            </div>
           </div>
 
           <p className="bd-or">of</p>
 
           <div className="bd-pane">
             <h3>Meedoen met een code</h3>
-            <p className="sub">gekregen via WhatsApp</p>
+            <p className="sub">de lange code of de eenvoudige code van je huishouden</p>
             <label>Code</label>
-            <input className="code" value={joinCode} maxLength={9} placeholder="XXXX-XXXX"
+            <input className="code" value={joinCode} maxLength={40} placeholder="XXXX-XXXX of pergo"
               onChange={(e) => { setJoinCode(e.target.value); setJoinWarn(false); }} />
             {joinWarn && (
               <div className="bd-warnbox">
@@ -1157,12 +1367,12 @@ export default function App() {
         {tab === "kies" && (hits ? (
           <>
             <p className="bd-eyebrow">{hits.length} van {catalog.length} artikelen</p>
-            <div className="bd-items">{hits.map((it) => <Row key={it.id} it={it} />)}</div>
+            <div className="bd-items">{hits.map((it) => rij(it))}</div>
             {!exact && (
               <div className="bd-new">
                 <p>Staat <b>{q.trim()}</b> er niet bij? Zet het in de catalogus — hij blijft daarna bewaard.</p>
                 <select value={newCat} onChange={(e) => setNewCat(e.target.value)}>
-                  {CATS.map((c) => <option key={c}>{c}</option>)}
+                  {ordCats.map((c) => <option key={c}>{c}</option>)}
                 </select>
                 <button className="bd-btn" onClick={addFromSearch}>Toevoegen aan catalogus</button>
               </div>
@@ -1173,11 +1383,11 @@ export default function App() {
             {favs.length > 0 && (
               <>
                 <p className="bd-eyebrow">Vaak op je lijst</p>
-                <div className="bd-items">{favs.map((it) => <Row key={"f" + it.id} it={it} />)}</div>
+                <div className="bd-items">{favs.map((it) => rij(it, "f" + it.id))}</div>
               </>
             )}
             <p className="bd-eyebrow">Catalogus · looproute</p>
-            {CATS.map((cat) => {
+            {ordCats.map((cat) => {
               const items = byCat[cat] || [];
               if (!items.length) return null;
               const n = items.filter((i) => sel[i.id]).length;
@@ -1190,7 +1400,7 @@ export default function App() {
                     {n > 0 && <span className="bd-badge">{n}</span>}
                     <span className="bd-count">{items.length}</span>
                   </button>
-                  {o && <div className="bd-items">{items.map((it) => <Row key={it.id} it={it} />)}</div>}
+                  {o && <div className="bd-items">{items.map((it) => rij(it))}</div>}
                 </section>
               );
             })}
@@ -1215,24 +1425,27 @@ export default function App() {
                   <span>{winkel}</span>
                   <span className="n">{items.length}</span>
                 </p>
-                {CATS.map((cat) => {
-                  const rij = items
+                {ordCats.map((cat) => {
+                  const regels = items
                     .filter((i) => i.cat === cat)
                     .sort((a, b) => a.name.localeCompare(b.name, "nl"));
-                  if (!rij.length) return null;
+                  if (!regels.length) return null;
                   return (
                     <div key={cat}>
                       <p className="bd-sec">{cat}</p>
-                      {rij.map((i) => (
-                        <button className="bd-line" key={i.id} onClick={() => tickLine(i.id)}>
+                      {regels.map((i) => (
+                        <button className="bd-line" key={rijId(i)} onClick={() => tickLine(rijId(i))}>
                           <span className="bd-box" />
                           <span className="bd-txt">
                             <span className="nm">{i.name}</span>
-                            {(i.note || i.deal || (meerdere && i.by)) && (
+                            {(i.note || i.deal || dubbel.has(norm(i.name)) || (meerdere && i.by)) && (
                               <span className="bd-meta">
                                 {i.deal && <span className="bd-flag a">Aanbieding</span>}
                                 {i.note && <span className="bd-note-inline">{i.note}</span>}
-                                {meerdere && i.by && <span className="bd-by">{i.by}</span>}
+                                {dubbel.has(norm(i.name)) && (
+                                  <span className="bd-flag d">! ook bij {dubbel.get(norm(i.name)).filter((w) => w !== i.shop).join(" en ")}</span>
+                                )}
+                                {meerdere && i.by && <span className="bd-by">van {i.by}</span>}
                               </span>
                             )}
                           </span>
@@ -1254,7 +1467,7 @@ export default function App() {
               <div className="bd-cart">
                 <p className="bd-sec">In de wagen</p>
                 {cart.map((i) => (
-                  <button className="bd-line done" key={i.id} onClick={() => tickLine(i.id)}>
+                  <button className="bd-line done" key={rijId(i)} onClick={() => tickLine(rijId(i))}>
                     <span className="bd-box"><Check /></span>
                     <span className="bd-txt">
                       <span className="nm">{i.name}</span>
@@ -1367,6 +1580,13 @@ export default function App() {
                   <p className="bd-hint">Wie de code invult, ziet dezelfde lijst en historie — handig voor één huishouden. Familie die zelf wil bijhouden, start een eigen huishouden met een eigen code.</p>
                   <label>Naam van dit huishouden</label>
                   <input key={hh} defaultValue={house} onBlur={(e) => renameHouse(e.target.value)} placeholder="bijv. Thuis" />
+                  <label>Eenvoudige code (optioneel)</label>
+                  <input key={"a" + hh} defaultValue={alias} placeholder="bijv. pergo"
+                    onBlur={(e) => saveAlias(e.target.value)} />
+                  <p className="bd-hint">
+                    Hiermee kan iemand ook meedoen zonder de lange code te typen. Houd hem niet té
+                    voorspelbaar: wie hem raadt, komt in jullie lijst.
+                  </p>
                   <label>Link naar deze app</label>
                   <input value={urlDraft} onChange={(e) => setUrlDraft(e.target.value)}
                     onBlur={() => saveMe({ ...me, appUrl: urlDraft.trim() })} placeholder="https://…" />
@@ -1409,11 +1629,44 @@ export default function App() {
                   )}
                   <label>Jouw naam</label>
                   <input key={"n" + uid} defaultValue={me.name} onBlur={(e) => saveMyName(e.target.value)} />
+                  {!isOwner && (
+                    <>
+                      <label>Beheer van dit huishouden overnemen</label>
+                      <div className="bd-mini">
+                        <input className="code" value={ownDraft} maxLength={9} placeholder="XXXX-XXXX"
+                          onChange={(e) => setOwnDraft(e.target.value)} />
+                        <button className="pri" style={{ flex: "none", padding: "10px 16px" }} onClick={takeOwner}>Overnemen</button>
+                      </div>
+                      <p className="bd-hint">
+                        Vul de volledige code van dit huishouden in om oprichter te worden. Handig als
+                        de oorspronkelijke oprichter er niet meer bij kan.
+                      </p>
+                    </>
+                  )}
                   <p className="bd-hint">
                     {isOwner
                       ? "Jij bent de oprichter en kunt mensen verwijderen. Wie je verwijdert, komt er ook met de code niet meer in."
                       : `Alleen ${(members.people.find((p) => p.uid === members.owner) || {}).name || "de oprichter"} kan mensen uit dit huishouden halen.`}
                   </p>
+                </div>
+
+                <div className="bd-pane">
+                  <h3>Volgorde in de winkel</h3>
+                  <p className="sub">zet de rijen in de looprichting van jullie supermarkt</p>
+                  {ordCats.map((c, i) => (
+                    <div className="bd-ord" key={c}>
+                      <span className="n">{i + 1}</span>
+                      <span className="l">{c}</span>
+                      <button onClick={() => moveCat(c, -1)} disabled={i === 0} aria-label="omhoog">↑</button>
+                      <button onClick={() => moveCat(c, 1)} disabled={i === ordCats.length - 1} aria-label="omlaag">↓</button>
+                    </div>
+                  ))}
+                  <div className="bd-mini" style={{ marginTop: 12 }}>
+                    <button onClick={() => { setCatOrder(CATS); saveSettings({ catOrder: CATS }); say("Standaardvolgorde terug"); }}>
+                      Standaardvolgorde
+                    </button>
+                  </div>
+                  <p className="bd-hint">Deze volgorde geldt voor alle winkels in dit huishouden.</p>
                 </div>
 
                 <div className="bd-pane">
@@ -1460,7 +1713,7 @@ export default function App() {
                     </div>
                   ))}
                   <label>Meedoen met een andere code</label>
-                  <input className="code" value={joinCode} maxLength={9} placeholder="XXXX-XXXX"
+                  <input className="code" value={joinCode} maxLength={40} placeholder="XXXX-XXXX of pergo"
                     onChange={(e) => { setJoinCode(e.target.value); setJoinWarn(false); }} />
                   {joinWarn && <div className="bd-warnbox">Onder deze code staat nog niets. Controleer de tekens, of ga verder om er een nieuw huishouden op te bouwen.</div>}
                   <div className="bd-mini" style={{ marginTop: 12 }}>
@@ -1471,21 +1724,63 @@ export default function App() {
               </>
             ) : (
               <>
+                {!admin && (
+                  <div className="bd-pane">
+                    <h3>Nog geen beheerder</h3>
+                    <p className="sub">de catalogus wordt door alle huishoudens gedeeld</p>
+                    <p className="bd-hint">
+                      Eén persoon beheert de artikelen. Die keurt nieuwe voorstellen goed en mag
+                      dingen verwijderen. Dit is eenmalig en daarna niet meer over te nemen.
+                    </p>
+                    <div className="act"><button className="bd-btn" onClick={claimBeheer}>Ik beheer de catalogus</button></div>
+                  </div>
+                )}
+
+                {isBeheerder && (
+                  <div className="bd-pane">
+                    <h3>Ter goedkeuring{pending.length ? ` · ${pending.length}` : ""}</h3>
+                    <p className="sub">voorstellen van huisgenoten en familie</p>
+                    {!pending.length && <p className="bd-hint">Niets in de wachtrij.</p>}
+                    {pending.map((p) => (
+                      <div key={p.id}>
+                        <div className="bd-pend">
+                          <span className="t">
+                            <b>{p.name}</b>
+                            <span>{p.cat} · {p.byName || "onbekend"}</span>
+                          </span>
+                          <button className="bd-ok" onClick={() => keurGoed(p)}>Goed</button>
+                          <button className={"bd-icon del" + (confirm === "w" + p.id ? " armed" : "")} onClick={() => {
+                            if (confirm === "w" + p.id) wijsAf(p);
+                            else { setConfirm("w" + p.id); setTimeout(() => setConfirm(""), 4000); }
+                          }}><Trash /></button>
+                        </div>
+                        {confirm === "w" + p.id && <div className="bd-warnbox">Nog een keer tikken wijst “{p.name}” af.</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className="bd-pane">
-                  <h3>Artikel toevoegen</h3>
-                  <p className="sub">{catalog.length} artikelen in de catalogus</p>
+                  <h3>{isBeheerder ? "Artikel toevoegen" : "Artikel voorstellen"}</h3>
+                  <p className="sub">
+                    {catalog.length} artikelen{isBeheerder ? "" : " · jouw voorstel komt bij de beheerder"}
+                  </p>
                   <label>Naam</label>
                   <input value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="bijv. verse pasta" />
                   <label>Categorie</label>
                   <select value={aCat} onChange={(e) => setACat(e.target.value)}>
-                    {CATS.map((c) => <option key={c}>{c}</option>)}
+                    {ordCats.map((c) => <option key={c}>{c}</option>)}
                   </select>
                   <div className="act"><button className="bd-btn" onClick={addFromManager}>Toevoegen</button></div>
                 </div>
 
                 <div className="bd-pane">
-                  <h3>Artikelen wijzigen of verwijderen</h3>
-                  <p className="sub">verwijderen haalt het uit de catalogus, niet uit je wagen</p>
+                  <h3>{isBeheerder ? "Artikelen wijzigen of verwijderen" : "Alle artikelen"}</h3>
+                  <p className="sub">
+                    {isBeheerder
+                      ? "verwijderen haalt het uit de catalogus, niet uit je wagen"
+                      : `alleen ${admin ? admin.name : "de beheerder"} kan artikelen wijzigen`}
+                  </p>
                   <label>Zoeken</label>
                   <input value={mq} onChange={(e) => setMq(e.target.value)} placeholder="filter op naam" />
                   {mHits.map((it) => (
@@ -1493,21 +1788,25 @@ export default function App() {
                       <div className="top">
                         <span className="nm">{it.name}</span>
                         <span className="ct">{it.cat}</span>
-                        <button className="bd-icon" onClick={() => {
-                          if (mEdit === it.id) setMEdit(null);
-                          else { setMEdit(it.id); setMName(it.name); setMCat(it.cat); }
-                        }}><Pen /></button>
-                        <button className={"bd-icon del" + (confirm === "d" + it.id ? " armed" : "")} onClick={() => {
-                          if (confirm === "d" + it.id) dropItem(it.id, it.name);
-                          else { setConfirm("d" + it.id); setTimeout(() => setConfirm(""), 4000); }
-                        }}><Trash /></button>
+                        {isBeheerder && (
+                          <>
+                            <button className="bd-icon" onClick={() => {
+                              if (mEdit === it.id) setMEdit(null);
+                              else { setMEdit(it.id); setMName(it.name); setMCat(it.cat); }
+                            }}><Pen /></button>
+                            <button className={"bd-icon del" + (confirm === "d" + it.id ? " armed" : "")} onClick={() => {
+                              if (confirm === "d" + it.id) dropItem(it.id, it.name);
+                              else { setConfirm("d" + it.id); setTimeout(() => setConfirm(""), 4000); }
+                            }}><Trash /></button>
+                          </>
+                        )}
                       </div>
                       {confirm === "d" + it.id && <div className="bd-warnbox">Nog een keer op de prullenbak tikken verwijdert “{it.name}” uit de catalogus van {house}.</div>}
                       {mEdit === it.id && (
                         <div className="ed">
                           <input value={mName} onChange={(e) => setMName(e.target.value)} />
                           <select value={mCat} onChange={(e) => setMCat(e.target.value)}>
-                            {CATS.map((c) => <option key={c}>{c}</option>)}
+                            {ordCats.map((c) => <option key={c}>{c}</option>)}
                           </select>
                           <div className="bd-mini">
                             <button className="pri" onClick={() => applyEdit(it.id)}>Opslaan</button>
@@ -1517,10 +1816,12 @@ export default function App() {
                       )}
                     </div>
                   ))}
-                  {catalog.length > mHits.length && <p className="bd-hint">Eerste {mHits.length} van {catalog.length} — zoek om verder te filteren.</p>}
-                  <div className="bd-mini" style={{ marginTop: 14 }}>
-                    <button onClick={restoreSeed}>{nieuwBeschikbaar ? `Catalogus bijwerken (+${nieuwBeschikbaar})` : "Catalogus is bijgewerkt"}</button>
-                  </div>
+                  {zichtbaar.length > mHits.length && <p className="bd-hint">Eerste {mHits.length} van {zichtbaar.length} — zoek om verder te filteren.</p>}
+                  {isBeheerder && (
+                    <div className="bd-mini" style={{ marginTop: 14 }}>
+                      <button onClick={restoreSeed}>{nieuwBeschikbaar ? `Catalogus bijwerken (+${nieuwBeschikbaar})` : "Catalogus is bijgewerkt"}</button>
+                    </div>
+                  )}
                 </div>
               </>
             )}
