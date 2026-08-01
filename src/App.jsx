@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    Boodschappen — catalogus → winkellijst → historie
    ============================================================ */
 
-const VERSIE = "2026.07.30-d";   /* staat onderaan Beheer › Huishouden */
+const VERSIE = "2026.07.30-e";   /* staat onderaan Beheer › Huishouden */
 const IDX_KEY = "bd:index:v1";        /* gedeeld: welke huishoudens bestaan er */
 const CAT_KEY = "bd:cat:v3";          /* gedeeld: één catalogus voor iedereen */
 const ADMIN_KEY = "bd:admin:v1";      /* gedeeld: wie beheert de catalogus */
@@ -286,6 +286,11 @@ const CSS = `
 .bd-ov .c{font-family:var(--mono);font-size:10.5px;color:var(--ink2);align-self:center}
 .bd-ov .p{grid-column:1 / -1;font-size:12.5px;color:var(--ink2)}
 .bd-ov .s{grid-column:1 / -1;font-family:var(--mono);font-size:10.5px;color:#8d9490;margin-top:2px}
+.bd-ov .u{grid-column:1 / -1;display:flex;align-items:center;gap:8px;margin-top:7px}
+.bd-ov .u i{flex:none;width:22px;height:22px;border-radius:50%;background:#e8ece3;color:#3c5145;
+  font-style:normal;font-family:var(--mono);font-size:10.5px;font-weight:700;display:grid;place-items:center}
+.bd-ov .u em{flex:1;min-width:0;font-style:normal;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bd-ov .u b{font-family:var(--mono);font-size:10px;font-weight:400;color:#8d9490}
 .bd-pend{border-top:1px solid #f0f2ec;padding:11px 0;display:flex;align-items:center;gap:9px}
 .bd-pend .t{flex:1;min-width:0}
 .bd-pend .t b{display:block;font-size:14px;font-weight:650}
@@ -1829,10 +1834,61 @@ export default function App() {
               <div className="bd-chips">
                 <button className={"bd-chip" + (pane === "huis" ? " on" : "")} onClick={() => setPane("huis")}>Huishouden</button>
                 <button className={"bd-chip" + (pane === "cat" ? " on" : "")} onClick={() => setPane("cat")}>Catalogus</button>
+                {isBeheerder && (
+                  <button className={"bd-chip" + (pane === "ov" ? " on" : "")}
+                    onClick={() => { setPane("ov"); if (overzicht === null) haalOverzicht(); }}>Overzicht</button>
+                )}
               </div>
             </div>
 
-            {pane === "huis" ? (
+            {pane === "ov" ? (
+              <>
+                <div className="bd-pane">
+                  <h3>Alle huishoudens</h3>
+                  <p className="sub">
+                    {overzicht === null ? "nog niet opgehaald" : `${overzicht.length} huishoudens · ${overzicht.reduce((n, o) => n + ((o.leden || []).length), 0)} gebruikers`}
+                  </p>
+                  {overzicht === null ? (
+                    <div className="act"><button className="bd-btn" onClick={haalOverzicht}>Ophalen</button></div>
+                  ) : !overzicht.length ? (
+                    <>
+                      <div className="bd-warnbox">{ovFout || "Geen huishoudens gevonden."}</div>
+                      <div className="bd-mini" style={{ marginTop: 10 }}>
+                        <button onClick={haalOverzicht}>Opnieuw proberen</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {overzicht.map((o) => (
+                        <div className="bd-ov" key={o.code_begin + o.naam}>
+                          <b>{o.naam}</b>
+                          <span className="c">{o.code_begin}-••••</span>
+                          <span className="s">
+                            lijst gewijzigd: {o.gewijzigd ? geleden(new Date(o.gewijzigd).getTime()) : "nooit"}
+                            {" · "}{Number(o.rondes || 0)} {Number(o.rondes) === 1 ? "ronde" : "rondes"}
+                          </span>
+                          {(o.leden || []).map((p) => (
+                            <span className="u" key={p.naam}>
+                              <i>{(p.naam || "?").charAt(0).toUpperCase()}</i>
+                              <em>{p.naam}</em>
+                              <b>{p.laatst ? geleden(Number(p.laatst)) : "nooit geopend"}</b>
+                            </span>
+                          ))}
+                          {!(o.leden || []).length && <span className="u"><em>nog niemand</em></span>}
+                        </div>
+                      ))}
+                      <div className="bd-mini" style={{ marginTop: 12 }}>
+                        <button onClick={haalOverzicht}>Vernieuwen</button>
+                      </div>
+                    </>
+                  )}
+                  <p className="bd-hint">
+                    Je ziet welke huishoudens er zijn, wie erin zitten en wanneer er voor het laatst
+                    iets aan hun lijst is veranderd. De lijsten en historie zelf blijven privé.
+                  </p>
+                </div>
+              </>
+            ) : pane === "huis" ? (
               <>
                 <div className="bd-pane">
                   <h3>{house}</h3>
@@ -1857,45 +1913,6 @@ export default function App() {
                     onBlur={() => saveMe({ ...me, appUrl: urlDraft.trim() })} placeholder="https://…" />
                   <p className="bd-hint">Plak hier de link waarop jullie de app openen. Die komt dan automatisch in de uitnodiging te staan.</p>
                   {csv && <textarea className="bd-csv" readOnly value={csv} onFocus={(e) => e.target.select()} />}
-                  {isBeheerder && (
-                    <>
-                      <label>Alle huishoudens</label>
-                      {overzicht === null ? (
-                        <div className="bd-mini">
-                          <button className="pri" onClick={haalOverzicht}>Overzicht ophalen</button>
-                        </div>
-                      ) : !overzicht.length ? (
-                        <>
-                          <div className="bd-warnbox">{ovFout || "Geen huishoudens gevonden."}</div>
-                          <div className="bd-mini" style={{ marginTop: 10 }}>
-                            <button onClick={haalOverzicht}>Opnieuw proberen</button>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          {overzicht.map((o) => (
-                            <div className="bd-ov" key={o.code_begin + o.naam}>
-                              <b>{o.naam}</b>
-                              <span className="c">{o.code_begin}-••••</span>
-                              <span className="p">{o.leden || "nog niemand"}</span>
-                              <span className="s">
-                                {o.laatst ? geleden(Number(o.laatst)) : "nog niet geopend"}
-                                {" · "}
-                                {Number(o.rondes || 0)} {Number(o.rondes) === 1 ? "ronde" : "rondes"}
-                              </span>
-                            </div>
-                          ))}
-                          <div className="bd-mini" style={{ marginTop: 10 }}>
-                            <button onClick={haalOverzicht}>Vernieuwen</button>
-                          </div>
-                        </>
-                      )}
-                      <p className="bd-hint">
-                        Je ziet wie waar in zit, maar nooit hun lijsten of historie. Daarvoor heb je
-                        hun volledige code nodig.
-                      </p>
-                    </>
-                  )}
                   <label>Versie van de app</label>
                   <div className="bd-mini">
                     <span style={{ flex: 1, fontFamily: "var(--mono)", fontSize: 12, alignSelf: "center", color: "var(--ink2)" }}>
