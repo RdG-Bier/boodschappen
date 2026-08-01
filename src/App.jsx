@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    Boodschappen — catalogus → winkellijst → historie
    ============================================================ */
 
-const VERSIE = "2026.07.30-c";   /* staat onderaan Beheer › Huishouden */
+const VERSIE = "2026.07.30-d";   /* staat onderaan Beheer › Huishouden */
 const IDX_KEY = "bd:index:v1";        /* gedeeld: welke huishoudens bestaan er */
 const CAT_KEY = "bd:cat:v3";          /* gedeeld: één catalogus voor iedereen */
 const ADMIN_KEY = "bd:admin:v1";      /* gedeeld: wie beheert de catalogus */
@@ -285,6 +285,7 @@ const CSS = `
 .bd-ov b{font-size:14px;font-weight:650}
 .bd-ov .c{font-family:var(--mono);font-size:10.5px;color:var(--ink2);align-self:center}
 .bd-ov .p{grid-column:1 / -1;font-size:12.5px;color:var(--ink2)}
+.bd-ov .s{grid-column:1 / -1;font-family:var(--mono);font-size:10.5px;color:#8d9490;margin-top:2px}
 .bd-pend{border-top:1px solid #f0f2ec;padding:11px 0;display:flex;align-items:center;gap:9px}
 .bd-pend .t{flex:1;min-width:0}
 .bd-pend .t b{display:block;font-size:14px;font-weight:650}
@@ -512,6 +513,7 @@ export default function App() {
   const [pickRest, setPickRest] = useState("");
   const [newShop, setNewShop] = useState("");
   const [overzicht, setOverzicht] = useState(null);
+  const [ovFout, setOvFout] = useState("");
   const [pending, setPending] = useState([]);
   const [admin, setAdmin] = useState(null);
   const [uses, setUses] = useState({});
@@ -974,12 +976,31 @@ export default function App() {
   }
 
   async function haalOverzicht() {
+    setOvFout("");
+    let kenmerk = uid;
+    /* is het beheerderskenmerk van een ouder toestel? koppel het aan dit toestel */
+    if (admin && admin.uid !== uid && admin.name && norm(admin.name) === norm(me.name || "")) {
+      const na = { ...admin, uid };
+      setAdmin(na);
+      await save(ADMIN_KEY, na);
+      kenmerk = uid;
+    } else if (admin) {
+      kenmerk = admin.uid === uid ? uid : admin.uid;
+    }
     try {
-      const r = await HUIS.overzicht(uid);
+      const r = await HUIS.overzicht(kenmerk);
       setOverzicht(Array.isArray(r) ? r : []);
-      if (!r || !r.length) say("Geen huishoudens gevonden, of je bent niet de beheerder");
+      if (!r || !r.length) setOvFout("Er staan nog geen huishoudens in het overzicht.");
     } catch (e) {
-      say("Kon het overzicht niet ophalen");
+      setOverzicht([]);
+      const m = String((e && e.message) || e);
+      setOvFout(
+        m.includes("huis_overzicht") || m.includes("404") || m.includes("PGRST202")
+          ? "De databasefunctie ontbreekt nog. Voer supabase-update3.sql uit in Supabase."
+          : m.includes("beheerder")
+          ? "Dit toestel staat niet als beheerder geregistreerd. Draai supabase-herstel.sql of claim het beheer opnieuw."
+          : m
+      );
     }
   }
 
@@ -1844,7 +1865,12 @@ export default function App() {
                           <button className="pri" onClick={haalOverzicht}>Overzicht ophalen</button>
                         </div>
                       ) : !overzicht.length ? (
-                        <p className="bd-hint">Geen huishoudens gevonden.</p>
+                        <>
+                          <div className="bd-warnbox">{ovFout || "Geen huishoudens gevonden."}</div>
+                          <div className="bd-mini" style={{ marginTop: 10 }}>
+                            <button onClick={haalOverzicht}>Opnieuw proberen</button>
+                          </div>
+                        </>
                       ) : (
                         <>
                           {overzicht.map((o) => (
@@ -1852,6 +1878,11 @@ export default function App() {
                               <b>{o.naam}</b>
                               <span className="c">{o.code_begin}-••••</span>
                               <span className="p">{o.leden || "nog niemand"}</span>
+                              <span className="s">
+                                {o.laatst ? geleden(Number(o.laatst)) : "nog niet geopend"}
+                                {" · "}
+                                {Number(o.rondes || 0)} {Number(o.rondes) === 1 ? "ronde" : "rondes"}
+                              </span>
                             </div>
                           ))}
                           <div className="bd-mini" style={{ marginTop: 10 }}>
