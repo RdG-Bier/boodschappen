@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    Boodschappen — catalogus → winkellijst → historie
    ============================================================ */
 
-const VERSIE = "2026.07.30-b";   /* staat onderaan Beheer › Huishouden */
+const VERSIE = "2026.07.30-c";   /* staat onderaan Beheer › Huishouden */
 const IDX_KEY = "bd:index:v1";        /* gedeeld: welke huishoudens bestaan er */
 const CAT_KEY = "bd:cat:v3";          /* gedeeld: één catalogus voor iedereen */
 const ADMIN_KEY = "bd:admin:v1";      /* gedeeld: wie beheert de catalogus */
@@ -226,12 +226,14 @@ const CSS = `
 .bd-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--lime);margin-right:5px;vertical-align:1px}
 .bd-dot.off{background:var(--amber)}
 
-.bd-search{margin-top:12px;display:flex;align-items:center;gap:8px;background:#fff;border-radius:10px;padding:0 12px}
+.bd-search{margin-top:12px;display:flex;align-items:center;gap:8px;background:#fff;border-radius:10px;
+  padding:0 8px 0 12px;color:#6f7f74}
 .bd-search input{flex:1;min-width:0;border:0;outline:0;padding:13px 0;background:none;color:var(--ink)}
-.bd-search svg{flex:none;opacity:.45}
-.bd-clear{flex:none;width:30px;height:30px;margin:0 -4px 0 2px;border-radius:50%;
-  background:#e8ece3;color:#5a6b5f;display:grid;place-items:center}
-.bd-clear:active{background:#d7ddd1}
+.bd-search > svg{flex:none;opacity:.8}
+.bd-clear{flex:none;width:32px;height:32px;border-radius:50%;background:var(--ink);color:#fff;
+  display:grid;place-items:center;opacity:1}
+.bd-clear svg{opacity:1}
+.bd-clear:active{background:#2c4a3d}
 
 .bd-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:126px}
 .bd-eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
@@ -1573,7 +1575,7 @@ export default function App() {
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Zoek artikel…" />
             {q && (
               <button className="bd-clear" onClick={() => setQ("")} aria-label="zoekbalk leegmaken">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round">
                   <path d="M6 6l12 12M18 6L6 18" />
                 </svg>
               </button>
