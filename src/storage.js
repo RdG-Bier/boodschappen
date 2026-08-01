@@ -69,9 +69,11 @@ const storage = {
 };
 
 const huis = {
-  add: (code, naam) => rpc("huis_add", { p_hh: code, p_name: naam }),
+  add: (code, naam, alias) => rpc("huis_add", { p_hh: code, p_name: naam, p_alias: alias || "" }),
   index: async () => (await rpc("huis_index")) || [],
   zoek: (pre, rest) => rpc("huis_zoek", { p_pre: pre, p_rest: rest }),
+  viaAlias: (a) => rpc("huis_alias", { p_alias: a }),
+  overzicht: async (adminUid) => (await rpc("huis_overzicht", { p_uid: adminUid })) || [],
 };
 
 if (typeof window !== "undefined") {
