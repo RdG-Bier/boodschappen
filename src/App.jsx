@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    Boodschappen — catalogus → winkellijst → historie
    ============================================================ */
 
-const VERSIE = "2026.07.30-a";   /* staat onderaan Beheer › Huishouden */
+const VERSIE = "2026.07.30-b";   /* staat onderaan Beheer › Huishouden */
 const IDX_KEY = "bd:index:v1";        /* gedeeld: welke huishoudens bestaan er */
 const CAT_KEY = "bd:cat:v3";          /* gedeeld: één catalogus voor iedereen */
 const ADMIN_KEY = "bd:admin:v1";      /* gedeeld: wie beheert de catalogus */
@@ -171,6 +171,11 @@ const HUIS = {
     const hit = idx.find((x) => x.hh.toUpperCase() === (pre + rest).toUpperCase());
     return hit ? hit.hh : null;
   },
+  /* overzicht voor de beheerder: namen en leden, geen lijsten */
+  async overzicht(adminUid) {
+    if (typeof window !== "undefined" && window.huis && window.huis.overzicht) return window.huis.overzicht(adminUid);
+    return [];
+  },
   /* zoek op zelfgekozen eenvoudige code */
   async viaAlias(a) {
     if (typeof window !== "undefined" && window.huis && window.huis.viaAlias) return window.huis.viaAlias(a);
@@ -181,11 +186,14 @@ const HUIS = {
 };
 
 /* ---------- opslag ---------- */
-async function load(key, fallback, shared = true) {
+async function load(key, fallback, shared = true, streng = false) {
   try {
     const r = await window.storage.get(key, shared);
     return r && r.value ? JSON.parse(r.value) : fallback;
-  } catch {
+  } catch (e) {
+    /* streng = een storing mag niet doorgaan alsof er niets stond,
+       anders overschrijft de app je instellingen met standaardwaarden */
+    if (streng) throw e;
     return fallback;
   }
 }
@@ -221,7 +229,9 @@ const CSS = `
 .bd-search{margin-top:12px;display:flex;align-items:center;gap:8px;background:#fff;border-radius:10px;padding:0 12px}
 .bd-search input{flex:1;min-width:0;border:0;outline:0;padding:13px 0;background:none;color:var(--ink)}
 .bd-search svg{flex:none;opacity:.45}
-.bd-clear{font-size:22px;line-height:1;color:var(--ink2);padding:0 4px}
+.bd-clear{flex:none;width:30px;height:30px;margin:0 -4px 0 2px;border-radius:50%;
+  background:#e8ece3;color:#5a6b5f;display:grid;place-items:center}
+.bd-clear:active{background:#d7ddd1}
 
 .bd-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:126px}
 .bd-eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
@@ -269,6 +279,10 @@ const CSS = `
 .bd-ord button{flex:none;width:34px;height:34px;border:1px solid var(--line);border-radius:8px;
   background:#fff;display:grid;place-items:center;font-size:14px}
 .bd-ord button:disabled{opacity:.3}
+.bd-ov{border-top:1px solid #f0f2ec;padding:10px 0;display:grid;grid-template-columns:1fr auto;gap:2px 10px}
+.bd-ov b{font-size:14px;font-weight:650}
+.bd-ov .c{font-family:var(--mono);font-size:10.5px;color:var(--ink2);align-self:center}
+.bd-ov .p{grid-column:1 / -1;font-size:12.5px;color:var(--ink2)}
 .bd-pend{border-top:1px solid #f0f2ec;padding:11px 0;display:flex;align-items:center;gap:9px}
 .bd-pend .t{flex:1;min-width:0}
 .bd-pend .t b{display:block;font-size:14px;font-weight:650}
@@ -495,6 +509,7 @@ export default function App() {
   const [pickHh, setPickHh] = useState("");
   const [pickRest, setPickRest] = useState("");
   const [newShop, setNewShop] = useState("");
+  const [overzicht, setOverzicht] = useState(null);
   const [pending, setPending] = useState([]);
   const [admin, setAdmin] = useState(null);
   const [uses, setUses] = useState({});
@@ -507,6 +522,8 @@ export default function App() {
   const dragRef = useRef(null);
   const ordRef = useRef(CATS);
   const [pull, setPull] = useState(0);
+  const [laadFout, setLaadFout] = useState("");
+  const [settingsOk, setSettingsOk] = useState(false);
   const pullRef = useRef(null);
   const bodyRef = useRef(null);
   const [booting, setBooting] = useState(true);
@@ -584,7 +601,19 @@ export default function App() {
   /* ---------- huishouden openen ---------- */
   const openHouse = useCallback(async (code, myUid, naam) => {
     setReady(false);
-    const mem = await load(K(code, "members"), { owner: "", people: [], blocked: [] });
+    setSettingsOk(false);
+    setLaadFout("");
+    let mem, cfg, glob, hist, adm;
+    try {
+      mem = await load(K(code, "members"), { owner: "", people: [], blocked: [] }, true, true);
+      cfg = await load(K(code, "catalog"), null, true, true);
+      glob = await load(CAT_KEY, null, true, true);
+      hist = await load(K(code, "history"), [], true, true);
+      adm = await load(ADMIN_KEY, null, true, true);
+    } catch (e) {
+      setLaadFout(String((e && e.message) || e));
+      return false;
+    }
     if (!Array.isArray(mem.people)) mem.people = [];
     if (!Array.isArray(mem.blocked)) mem.blocked = [];
     if (mem.blocked.some((b) => (b.uid || b) === myUid)) {
@@ -625,7 +654,6 @@ export default function App() {
     setMembers(mem);
     if (hersteld) setTimeout(() => say(`Welkom terug ${hersteld} — je oude plek is hergebruikt`), 400);
     /* instellingen van dit huishouden */
-    const cfg = await load(K(code, "catalog"), null);
     setShops(cfg && Array.isArray(cfg.shops) && cfg.shops.length ? cfg.shops : SHOPS_STANDAARD);
     setDefShop(cfg && cfg.defaultShop ? cfg.defaultShop : SHOP_DEFAULT);
     setUses(cfg && cfg.uses ? cfg.uses : {});
@@ -635,7 +663,6 @@ export default function App() {
     setHouse(cfg && cfg.name ? cfg.name : "Huishouden");
 
     /* de catalogus is gedeeld door alle huishoudens */
-    let glob = await load(CAT_KEY, null);
     if (!glob || !Array.isArray(glob.items) || !glob.items.length) {
       const start = cfg && Array.isArray(cfg.items) && cfg.items.length
         ? cfg.items.map((i) => ({ id: i.id, name: i.name, cat: i.cat }))
@@ -645,17 +672,24 @@ export default function App() {
     }
     setCatalog(glob.items);
     setPending(Array.isArray(glob.pending) ? glob.pending : []);
-    const a = await load(ADMIN_KEY, null);
+    const a = adm;
     if (a && a.uid !== myUid && a.name && norm(a.name) === norm(naam)) {
       const na = { ...a, uid: myUid };
       await save(ADMIN_KEY, na);
       setAdmin(na);
     } else setAdmin(a);
-    const live = await load(K(code, "live"), null);
+    let live = null;
+    try {
+      live = await load(K(code, "live"), null, true, true);
+    } catch (e) {
+      setLaadFout(String((e && e.message) || e));
+      return false;
+    }
     setSel(live && live.sel ? live.sel : {});
     setList(live && live.list ? live.list : null);
     clock.current = live && live.t ? live.t : 0;
-    setHist(await load(K(code, "history"), []));
+    setHist(hist);
+    setSettingsOk(true);
     setQ("");
     setEdit(null);
     setOpen({});
@@ -819,6 +853,7 @@ export default function App() {
   }, [house, shops, defShop, uses, catOrder, alias]);
 
   async function saveSettings(patch) {
+    if (!settingsOk) return say("Instellingen zijn niet geladen — nog even niet opslaan");
     const next = { ...cfgRef.current, ...patch };
     cfgRef.current = next;
     return save(K(hh, "catalog"), next);
@@ -936,6 +971,16 @@ export default function App() {
     window.location.reload();
   }
 
+  async function haalOverzicht() {
+    try {
+      const r = await HUIS.overzicht(uid);
+      setOverzicht(Array.isArray(r) ? r : []);
+      if (!r || !r.length) say("Geen huishoudens gevonden, of je bent niet de beheerder");
+    } catch (e) {
+      say("Kon het overzicht niet ophalen");
+    }
+  }
+
   async function claimBeheer() {
     const a = { uid, name: me.name };
     setAdmin(a);
@@ -953,7 +998,7 @@ export default function App() {
 
   /* ---------- opslaan + meelezen ---------- */
   useEffect(() => {
-    if (!ready || !hh) return;
+    if (!ready || !hh || !settingsOk) return;
     dirty.current = true;
     const t = setTimeout(async () => {
       clock.current = Date.now();
@@ -961,7 +1006,7 @@ export default function App() {
       dirty.current = false;
     }, 600);
     return () => clearTimeout(t);
-  }, [sel, list, ready, hh]);
+  }, [sel, list, ready, hh, settingsOk]);
 
   useEffect(() => {
     if (!ready || !hh) return;
@@ -1352,6 +1397,32 @@ export default function App() {
   /* ---------- setup ---------- */
   if (booting) return <div className="bd-root"><style>{CSS}</style><div className="bd-empty"><span>Even laden…</span></div></div>;
 
+  if (laadFout) {
+    return (
+      <div className="bd-root">
+        <style>{CSS}</style>
+        <div className="bd-body" style={{ paddingBottom: 24 }}>
+          <div className="bd-hero">
+            <div className="mark">📡</div>
+            <h2>Even geen verbinding</h2>
+            <p>
+              De gegevens konden niet worden opgehaald. Er is niets gewijzigd — je lijst en
+              instellingen staan nog gewoon goed. Probeer het zo opnieuw.
+            </p>
+          </div>
+          <div className="bd-pane">
+            <div className="act">
+              <button className="bd-btn" onClick={() => (hh && me && me.name ? openHouse(hh, uid, me.name) : setLaadFout(""))}>
+                Opnieuw proberen
+              </button>
+            </div>
+            <p className="bd-hint" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{laadFout}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (hh && !me.name) {
     return (
       <div className="bd-root">
@@ -1500,7 +1571,13 @@ export default function App() {
               <circle cx="11" cy="11" r="7" /><path d="M20 20l-4-4" strokeLinecap="round" />
             </svg>
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Zoek artikel…" />
-            {q && <button className="bd-clear" onClick={() => setQ("")}>×</button>}
+            {q && (
+              <button className="bd-clear" onClick={() => setQ("")} aria-label="zoekbalk leegmaken">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            )}
           </div>
         )}
       </header>
@@ -1757,6 +1834,35 @@ export default function App() {
                     onBlur={() => saveMe({ ...me, appUrl: urlDraft.trim() })} placeholder="https://…" />
                   <p className="bd-hint">Plak hier de link waarop jullie de app openen. Die komt dan automatisch in de uitnodiging te staan.</p>
                   {csv && <textarea className="bd-csv" readOnly value={csv} onFocus={(e) => e.target.select()} />}
+                  {isBeheerder && (
+                    <>
+                      <label>Alle huishoudens</label>
+                      {overzicht === null ? (
+                        <div className="bd-mini">
+                          <button className="pri" onClick={haalOverzicht}>Overzicht ophalen</button>
+                        </div>
+                      ) : !overzicht.length ? (
+                        <p className="bd-hint">Geen huishoudens gevonden.</p>
+                      ) : (
+                        <>
+                          {overzicht.map((o) => (
+                            <div className="bd-ov" key={o.code_begin + o.naam}>
+                              <b>{o.naam}</b>
+                              <span className="c">{o.code_begin}-••••</span>
+                              <span className="p">{o.leden || "nog niemand"}</span>
+                            </div>
+                          ))}
+                          <div className="bd-mini" style={{ marginTop: 10 }}>
+                            <button onClick={haalOverzicht}>Vernieuwen</button>
+                          </div>
+                        </>
+                      )}
+                      <p className="bd-hint">
+                        Je ziet wie waar in zit, maar nooit hun lijsten of historie. Daarvoor heb je
+                        hun volledige code nodig.
+                      </p>
+                    </>
+                  )}
                   <label>Versie van de app</label>
                   <div className="bd-mini">
                     <span style={{ flex: 1, fontFamily: "var(--mono)", fontSize: 12, alignSelf: "center", color: "var(--ink2)" }}>
