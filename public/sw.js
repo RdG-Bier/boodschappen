@@ -1,17 +1,17 @@
 /* Nieuwe versies moeten direct doorkomen:
    - HTML altijd eerst van het netwerk (anders blijf je op een oude bundel hangen)
    - overige bestanden uit cache, die hebben een unieke naam per build */
-const CACHE = "boodschappen-v2";
+const CACHE = "boodschappen-v3";
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["./"])).catch(() => {}).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {
+  /* geen clients.claim(): een openstaande pagina niet midden in het gebruik
+     overnemen. De nieuwe versie geldt vanaf de volgende keer openen. */
   e.waitUntil(
-    caches.keys()
-      .then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
+    caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
   );
 });
 
