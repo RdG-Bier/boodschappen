@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    Boodschappen — catalogus → winkellijst → historie
    ============================================================ */
 
-const VERSIE = "2026.07.30-e";   /* staat onderaan Beheer › Huishouden */
+const VERSIE = "2026.08.13-a";   /* staat onderaan Beheer › Huishouden */
 const IDX_KEY = "bd:index:v1";        /* gedeeld: welke huishoudens bestaan er */
 const CAT_KEY = "bd:cat:v3";          /* gedeeld: één catalogus voor iedereen */
 const ADMIN_KEY = "bd:admin:v1";      /* gedeeld: wie beheert de catalogus */
@@ -313,6 +313,8 @@ const CSS = `
 .bd-chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 .bd-chip.a.on{background:var(--amber);color:#3a2400;border-color:var(--amber)}
 
+.bd-meer{width:100%;border:1px dashed var(--line);border-radius:9px;padding:12px;background:#fff;
+  font-size:13.5px;font-weight:600;color:var(--ink2)}
 .bd-new{margin:12px 16px;padding:14px;border:2px dashed var(--line);border-radius:11px;
   display:flex;flex-direction:column;gap:10px;background:#fff}
 .bd-new p{font-size:13.5px;color:var(--ink2)}
@@ -518,6 +520,7 @@ export default function App() {
   const [pickRest, setPickRest] = useState("");
   const [newShop, setNewShop] = useState("");
   const [overzicht, setOverzicht] = useState(null);
+  const [meer, setMeer] = useState({});
   const [ovFout, setOvFout] = useState("");
   const [pending, setPending] = useState([]);
   const [admin, setAdmin] = useState(null);
@@ -1067,7 +1070,9 @@ export default function App() {
   /* wat jij ziet: alles wat goedgekeurd is, plus je eigen inzendingen */
   const zichtbaar = useMemo(() => {
     const mijn = pending.filter((p) => p.byUid === uid || isBeheerder).map((p) => ({ ...p, wacht: true }));
-    return [...catalog, ...mijn];
+    /* _n is de zoekvorm van de naam; die hier één keer maken in plaats van
+       bij elke toetsaanslag over 2000 artikelen heen */
+    return [...catalog, ...mijn].map((i) => (i._n ? i : { ...i, _n: norm(i.name) }));
   }, [catalog, pending, uid, isBeheerder]);
 
   const byCat = useMemo(() => {
@@ -1081,8 +1086,8 @@ export default function App() {
     const t = norm(q.trim());
     if (!t) return null;
     return zichtbaar
-      .filter((i) => norm(i.name).includes(t))
-      .sort((a, b) => norm(a.name).indexOf(t) - norm(b.name).indexOf(t) || a.name.localeCompare(b.name, "nl"))
+      .filter((i) => i._n.includes(t))
+      .sort((a, b) => a._n.indexOf(t) - b._n.indexOf(t) || a.name.localeCompare(b.name, "nl"))
       .slice(0, 60);
   }, [q, zichtbaar]);
 
@@ -1411,14 +1416,15 @@ export default function App() {
   });
 
   const nieuwBeschikbaar = useMemo(() => {
-    if (!catalog.length || !isBeheerder) return 0;
+    /* buildSeedCatalog bouwt 2000+ namen op: alleen doen op het catalogustabblad */
+    if (!catalog.length || !isBeheerder || tab !== "beheer" || pane !== "cat") return 0;
     const have = new Set(catalog.map((i) => norm(i.name) + "|" + i.cat));
     return buildSeedCatalog().filter((i) => !have.has(norm(i.name) + "|" + i.cat)).length;
-  }, [catalog, isBeheerder]);
+  }, [catalog, isBeheerder, tab, pane]);
 
   const mHits = useMemo(() => {
     const t = norm(mq.trim());
-    const base = t ? zichtbaar.filter((i) => norm(i.name).includes(t)) : zichtbaar;
+    const base = t ? zichtbaar.filter((i) => i._n.includes(t)) : zichtbaar;
     return [...base].sort((a, b) => ordCats.indexOf(a.cat) - ordCats.indexOf(b.cat) || a.name.localeCompare(b.name, "nl")).slice(0, 80);
   }, [mq, zichtbaar, ordCats]);
 
@@ -1654,7 +1660,16 @@ export default function App() {
                     {n > 0 && <span className="bd-badge">{n}</span>}
                     <span className="bd-count">{items.length}</span>
                   </button>
-                  {o && <div className="bd-items">{items.map((it) => rij(it))}</div>}
+                  {o && (
+                    <div className="bd-items">
+                      {(meer[cat] ? items : items.slice(0, 80)).map((it) => rij(it))}
+                      {!meer[cat] && items.length > 80 && (
+                        <button className="bd-meer" onClick={() => setMeer((p) => ({ ...p, [cat]: true }))}>
+                          Nog {items.length - 80} artikelen laden
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </section>
               );
             })}
