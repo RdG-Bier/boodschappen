@@ -130,18 +130,19 @@ if (window.location.search.indexOf("herstel") >= 0) {
     meld("openstaande fout: " + String((e.reason && (e.reason.stack || e.reason.message)) || e.reason))
   );
 
+  /* Geen automatische herlaad meer. Dat gaf een lus: elke herlaad liet de
+     service worker de pagina opnieuw overnemen, wat weer een herlaad gaf.
+     Een nieuwe versie komt binnen bij de volgende keer openen, of met de
+     knop Nieuwste ophalen in Beheer. */
   if ("serviceWorker" in navigator) {
-    let bezig = false;
-    navigator.serviceWorker.addEventListener("controllerchange", () => {
-      if (bezig) return;
-      bezig = true;
-      window.location.reload();
-    });
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js").then((reg) => {
-        reg.update().catch(() => {});
-        setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
-      }).catch(() => {});
+      navigator.serviceWorker
+        .register("./sw.js")
+        .then((reg) => {
+          reg.update().catch(() => {});
+          setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+        })
+        .catch(() => {});
     });
   }
 }
