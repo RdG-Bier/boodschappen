@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    Boodschappen — catalogus → winkellijst → historie
    ============================================================ */
 
-const VERSIE = "2026.08.13-b";   /* staat onderaan Beheer › Huishouden */
+const VERSIE = "2026.08.13-c";   /* staat onderaan Beheer › Huishouden */
 const IDX_KEY = "bd:index:v1";        /* gedeeld: welke huishoudens bestaan er */
 const CAT_KEY = "bd:cat:v3";          /* gedeeld: één catalogus voor iedereen */
 const ADMIN_KEY = "bd:admin:v1";      /* gedeeld: wie beheert de catalogus */
@@ -538,6 +538,7 @@ export default function App() {
   const [settingsOk, setSettingsOk] = useState(false);
   const pullRef = useRef(null);
   const bodyRef = useRef(null);
+  const zoekRef = useRef(null);
   const [booting, setBooting] = useState(true);
 
   /* data van het huidige huishouden */
@@ -1604,9 +1605,19 @@ export default function App() {
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <circle cx="11" cy="11" r="7" /><path d="M20 20l-4-4" strokeLinecap="round" />
             </svg>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Zoek artikel…" />
+            <input ref={zoekRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Zoek artikel…" />
             {q && (
-              <button className="bd-clear" onClick={() => setQ("")} aria-label="zoekbalk leegmaken">
+              <button
+                className="bd-clear"
+                aria-label="zoekbalk leegmaken"
+                /* voorkomt dat de knop de focus overneemt: anders klapt het toetsenbord dicht */
+                onPointerDown={(e) => e.preventDefault()}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  setQ("");
+                  if (zoekRef.current) zoekRef.current.focus();
+                }}
+              >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round">
                   <path d="M6 6l12 12M18 6L6 18" />
                 </svg>
@@ -1848,7 +1859,9 @@ export default function App() {
             <div className="bd-card">
               <div className="bd-chips">
                 <button className={"bd-chip" + (pane === "huis" ? " on" : "")} onClick={() => setPane("huis")}>Huishouden</button>
-                <button className={"bd-chip" + (pane === "cat" ? " on" : "")} onClick={() => setPane("cat")}>Catalogus</button>
+                <button className={"bd-chip" + (pane === "cat" ? " on" : "")} onClick={() => setPane("cat")}>
+                  Catalogus{isBeheerder && pending.length > 0 ? ` · ${pending.length}` : ""}
+                </button>
                 {isBeheerder && (
                   <button className={"bd-chip" + (pane === "ov" ? " on" : "")}
                     onClick={() => { setPane("ov"); if (overzicht === null) haalOverzicht(); }}>Overzicht</button>
@@ -2227,7 +2240,7 @@ export default function App() {
         </button>
         <button className={"bd-tab" + (tab === "beheer" ? " on" : "")} onClick={() => setTab("beheer")}>
           <span className="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" /></svg></span>
-          Beheer
+          Beheer{isBeheerder && pending.length > 0 && <span className="pip">{pending.length}</span>}
         </button>
       </nav>
     </div>
