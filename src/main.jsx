@@ -123,12 +123,23 @@ if (window.location.search.indexOf("herstel") >= 0) {
     </Vangnet>
   );
 
-  window.addEventListener("error", (e) =>
-    meld("fout: " + (e.message || "") + " @ " + (e.filename || "").split("/").pop() + ":" + (e.lineno || ""))
-  );
-  window.addEventListener("unhandledrejection", (e) =>
-    meld("openstaande fout: " + String((e.reason && (e.reason.stack || e.reason.message)) || e.reason))
-  );
+  /* Alleen fouten uit onze eigen code tonen. Browsers als Brave injecteren
+     scripts in elke pagina (crypto-wallet, afschermingen); die fouten zijn
+     niet van ons en zeggen niets over de app. */
+  const vanOns = (bron) => !!bron && bron.indexOf(window.location.origin) === 0;
+  const ruis = (t) =>
+    /ethereum|wallet|metamask|solana|extension|Script error|ResizeObserver/i.test(String(t || ""));
+
+  window.addEventListener("error", (e) => {
+    if (!vanOns(e.filename) || ruis(e.message)) return;
+    meld("fout: " + (e.message || "") + " @ " + String(e.filename).split("/").pop() + ":" + (e.lineno || ""));
+  });
+
+  window.addEventListener("unhandledrejection", (e) => {
+    const t = String((e.reason && (e.reason.stack || e.reason.message)) || e.reason);
+    if (ruis(t)) return;
+    meld("openstaande fout: " + t);
+  });
 
   /* Geen automatische herlaad meer. Dat gaf een lus: elke herlaad liet de
      service worker de pagina opnieuw overnemen, wat weer een herlaad gaf.
