@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    Boodschappen — catalogus → winkellijst → historie
    ============================================================ */
 
-const VERSIE = "2026.10.04-a";   /* staat onderaan Beheer › Huishouden */
+const VERSIE = "2026.11.02-a";   /* staat onderaan Beheer › Huishouden */
 const IDX_KEY = "bd:index:v1";        /* gedeeld: welke huishoudens bestaan er */
 const CAT_KEY = "bd:cat:v3";          /* gedeeld: één catalogus voor iedereen */
 const ADMIN_KEY = "bd:admin:v1";      /* gedeeld: wie beheert de catalogus */
@@ -1211,9 +1211,17 @@ export default function App() {
          precies dezelfde combinatie telt bij het aantal op */
       const samen = [...cur.items];
       items.forEach((n) => {
-        const i = samen.findIndex((o) => (o.rid || o.id + "@" + slug(o.shop || defShop)) === n.rid);
-        if (i >= 0) samen[i] = { ...samen[i], qty: Math.min(99, (samen[i].qty || 1) + (n.qty || 1)) };
-        else samen.push(n);
+        const sleutel = (o) => o.rid || o.id + "@" + slug(o.shop || defShop);
+        /* alleen optellen bij een regel die nog gepakt moet worden */
+        const i = samen.findIndex((o) => sleutel(o) === n.rid && !o.done);
+        if (i >= 0) {
+          samen[i] = { ...samen[i], qty: Math.min(99, (samen[i].qty || 1) + (n.qty || 1)) };
+          return;
+        }
+        /* ligt hetzelfde artikel al in de wagen? dan wordt dit een nieuwe regel
+           met een eigen kenmerk, zodat beide apart blijven bestaan */
+        const botst = samen.some((o) => sleutel(o) === n.rid);
+        samen.push(botst ? { ...n, rid: n.rid + "#" + Date.now().toString(36) } : n);
       });
       return { ...cur, items: samen };
     });
@@ -1748,7 +1756,8 @@ export default function App() {
             {!todo.length && (
               <div className="bd-done-msg">
                 <strong>Alles binnen 🎉</strong>
-                <span>Rond de lijst af, dan gaat alles de historie in.</span>
+                <span>Afronden schrijft {cart.length} artikelen naar de historie en maakt de lijst leeg.</span>
+                <button className="bd-btn" style={{ marginTop: 14 }} onClick={finish}>Lijst afronden</button>
               </div>
             )}
             {cart.length > 0 && (
